@@ -28,7 +28,7 @@ app.use(helmet({
 
 // ── Cross-Domain CORS Fix ────────────────────────────
 app.use(cors({
-  origin: process.env.CLIENT_ORIGIN || 'https://regal-druid-93caf2.netlify.app',
+  origin: true,
   credentials: true
 }));
 
