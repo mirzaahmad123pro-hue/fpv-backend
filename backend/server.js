@@ -18,19 +18,23 @@ const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
 
+// ── Render Proxy Fix ────────────────────────────────
+app.set('trust proxy', 1);
+
 // ── Security middleware ─────────────────────────────
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' } // allow images to be loaded by the frontend
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
 
+// ── Cross-Domain CORS Fix ────────────────────────────
 app.use(cors({
-  origin: true,
+  origin: process.env.CLIENT_ORIGIN || 'https://regal-druid-93caf2.netlify.app',
   credentials: true
 }));
 
-// Basic rate limiting to slow down brute-force / abuse. Tune as needed.
+// Basic rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
@@ -67,7 +71,7 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
 
-// ── 404 + error handling (must be last) ─────────────
+// ── 404 + error handling ─────────────────────────────
 app.use(notFound);
 app.use(errorHandler);
 
