@@ -1,19 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getProducts, getProductBySlug, getProductById,
-  createProduct, updateProduct, deleteProduct, deleteProductImage
+const { 
+  getProducts, 
+  getProductBySlug, 
+  createProduct, 
+  updateProduct, 
+  deleteProduct 
 } = require('../controllers/productController');
-const { authenticate } = require('../middleware/authMiddleware');
-const { requireAdmin } = require('../middleware/adminMiddleware');
-const { uploadProductImages } = require('../middleware/uploadMiddleware');
+const { protect, admin } = require('../middleware/authMiddleware');
+const upload = require('../middleware/uploadMiddleware');
 
-router.get('/', getProducts);
-router.get('/id/:id', authenticate, requireAdmin, getProductById);
-router.get('/:slug', getProductBySlug);
-router.post('/', authenticate, requireAdmin, uploadProductImages.array('images', 8), createProduct);
-router.put('/:id', authenticate, requireAdmin, uploadProductImages.array('images', 8), updateProduct);
-router.delete('/:id', authenticate, requireAdmin, deleteProduct);
-router.delete('/images/:imageId', authenticate, requireAdmin, deleteProductImage);
+router.route('/')
+  .get(getProducts)
+  .post(protect, admin, upload.array('images', 5), createProduct);
+
+router.route('/:slug')
+  .get(getProductBySlug);
+
+router.route('/:id')
+  .put(protect, admin, upload.array('images', 5), updateProduct)
+  .delete(protect, admin, deleteProduct);
 
 module.exports = router;
