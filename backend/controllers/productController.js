@@ -1,15 +1,29 @@
 const { pool } = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const { slugify } = require('../utils/helpers');
+const axios = require('axios');
+const FormData = require('form-data');
+
+// Helper function to upload file to ImgBB
+const uploadToImgBB = async (fileBuffer) => {
+  const IMGBB_API_KEY = process.env.IMGBB_API_KEY || '0257924d31bc4310078776acd495e8db';
+  const formData = new FormData();
+  formData.append('image', fileBuffer.toString('base64'));
+
+  const response = await axios.post(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, formData, {
+    headers: formData.getHeaders(),
+  });
+
+  if (response.data && response.data.data && response.data.data.url) {
+    return response.data.data.url;
+  } else {
+    throw new Error('Image upload to ImgBB failed');
+  }
+};
 
 // GET /api/products
-// Supports: ?category=slug  ?search=term  ?sort=price_asc|price_low... ?featured=1
-// ?new_arrival=1  ?gender=men  ?page=1  ?limit=12
 const getProducts = asyncHandler(async (req, res) => {
-  const {
-    category, search, sort, featured, new_arrival, gender,
-    page = 1, limit = 12
-  } = req.query;
+  const { category, search, sort, featured, new_arrival, gender, page = 1, limit = 12 } = req.query;
 
   const where = ["p.status != 'inactive'"];
   const params = [];
@@ -18,241 +32,179 @@ const getProducts = asyncHandler(async (req, res) => {
     where.push('c.slug = ?');
     params.push(category);
   }
+
   if (search) {
     where.push('(p.name LIKE ? OR p.short_description LIKE ? OR p.brand LIKE ?)');
     const like = `%${search}%`;
     params.push(like, like, like);
   }
+
   if (featured === '1') {
     where.push('p.featured = 1');
   }
+
   if (new_arrival === '1') {
     where.push('p.new_arrival = 1');
   }
+
   if (gender) {
-    where.push('p.gender_or_target = ?');
+    where.push('(p.gender = ? OR p.gender = "unisex")');
     params.push(gender);
   }
 
   let orderBy = 'p.created_at DESC';
-  if (sort === 'price_asc') orderBy = 'COALESCE(p.sale_price, p.regular_price) ASC';
-  if (sort === 'price_desc') orderBy = 'COALESCE(p.sale_price, p.regular_price) DESC';
-  if (sort === 'name_asc') orderBy = 'p.name ASC';
+  if (sort === 'price_asc') orderBy = 'p.price ASC';
+  if (sort === 'price_desc') orderBy = 'p.price DESC';
+  if (sort === 'rating') orderBy = 'p.rating DESC';
   if (sort === 'newest') orderBy = 'p.created_at DESC';
 
-  const pageNum = Math.max(parseInt(page, 10) || 1, 1);
-  const limitNum = Math.min(Math.max(parseInt(limit, 10) || 12, 1), 100);
-  const offset = (pageNum - 1) * limitNum;
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const offset = (parseInt(page) - 1) * parseInt(limit);
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const countSql = `SELECT COUNT(DISTINCT p.id) as total FROM products p LEFT JOIN categories c ON p.category_id = c.id ${whereClause}`;
+  const [countResult] = await pool.execute(countSql, params);
+  const total = countResult[0].total;
 
-  const [rows] = await pool.query(
-    `SELECT p.*, c.name AS category_name, c.slug AS category_slug,
-            (SELECT image_path FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC LIMIT 1) AS thumbnail
-     FROM products p
-     JOIN categories c ON c.id = p.category_id
-     ${whereSql}
-     ORDER BY ${orderBy}
-     LIMIT ? OFFSET ?`,
-    [...params, limitNum, offset]
-  );
+  const sql = `
+    SELECT 
+      p.*,
+      c.name as category_name, c.slug as category_slug,
+      (SELECT JSON_ARRAYAGG(image_url) FROM product_images WHERE product_id = p.id) as images,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('size', size, 'color', color, 'stock', stock)) FROM product_variants WHERE product_id = p.id) as variants
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+    ${whereClause}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `;
 
-  const [countRows] = await pool.query(
-    `SELECT COUNT(*) AS total FROM products p JOIN categories c ON c.id = p.category_id ${whereSql}`,
-    params
-  );
-  const total = countRows[0].total;
+  const [products] = await pool.execute(sql, [...params, String(parseInt(limit)), String(offset)]);
+
+  const formatted = products.map(p => ({
+    ...p,
+    images: typeof p.images === 'string' ? JSON.parse(p.images) : (p.images || []),
+    variants: typeof p.variants === 'string' ? JSON.parse(p.variants) : (p.variants || [])
+  }));
 
   res.json({
     success: true,
-    products: rows,
+    data: formatted,
     pagination: {
-      page: pageNum,
-      limit: limitNum,
+      page: parseInt(page),
+      limit: parseInt(limit),
       total,
-      totalPages: Math.ceil(total / limitNum)
+      pages: Math.ceil(total / parseInt(limit))
     }
   });
 });
 
 // GET /api/products/:slug
 const getProductBySlug = asyncHandler(async (req, res) => {
-  const [rows] = await pool.query(
-    `SELECT p.*, c.name AS category_name, c.slug AS category_slug
-     FROM products p JOIN categories c ON c.id = p.category_id
-     WHERE p.slug = ?`,
-    [req.params.slug]
-  );
-  if (rows.length === 0) {
-    return res.status(404).json({ success: false, message: 'Product not found.' });
+  const sql = `
+    SELECT 
+      p.*,
+      c.name as category_name, c.slug as category_slug,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', id, 'image_url', image_url, 'is_primary', is_primary)) FROM product_images WHERE product_id = p.id) as images,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', id, 'size', size, 'color', color, 'stock', stock, 'sku', sku)) FROM product_variants WHERE product_id = p.id) as variants
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+    WHERE p.slug = ? AND p.status != 'inactive'
+  `;
+
+  const [products] = await pool.execute(sql, [req.params.slug]);
+
+  if (!products.length) {
+    return res.status(404).json({ success: false, message: 'Product not found' });
   }
-  const product = rows[0];
 
-  const [images] = await pool.query(
-    'SELECT id, image_path, sort_order FROM product_images WHERE product_id = ? ORDER BY sort_order ASC',
-    [product.id]
-  );
-  const [variants] = await pool.query(
-    'SELECT * FROM product_variants WHERE product_id = ?',
-    [product.id]
+  const product = products[0];
+  product.images = typeof product.images === 'string' ? JSON.parse(product.images) : (product.images || []);
+  product.variants = typeof product.variants === 'string' ? JSON.parse(product.variants) : (product.variants || []);
+
+  const [related] = await pool.execute(
+    `SELECT p.id, p.name, p.slug, p.price, p.sale_price,
+      (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary = 1 LIMIT 1) as primary_image
+     FROM products p WHERE p.category_id = ? AND p.id != ? AND p.status = 'active' LIMIT 4`,
+    [product.category_id, product.id]
   );
 
-  res.json({ success: true, product: { ...product, images, variants } });
+  res.json({ success: true, data: { ...product, relatedProducts: related } });
 });
 
-// GET /api/products/id/:id  (used internally by admin edit form)
-const getProductById = asyncHandler(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM products WHERE id = ?', [req.params.id]);
-  if (rows.length === 0) {
-    return res.status(404).json({ success: false, message: 'Product not found.' });
-  }
-  const [images] = await pool.query(
-    'SELECT id, image_path, sort_order FROM product_images WHERE product_id = ? ORDER BY sort_order ASC',
-    [req.params.id]
-  );
-  const [variants] = await pool.query('SELECT * FROM product_variants WHERE product_id = ?', [req.params.id]);
-  res.json({ success: true, product: { ...rows[0], images, variants } });
-});
-
-// POST /api/products  (admin) — multipart/form-data, field "images" (multiple)
+// POST /api/products (Admin create product)
 const createProduct = asyncHandler(async (req, res) => {
-  const {
-    category_id, name, sku, brand, short_description, full_description,
-    regular_price, sale_price, stock_quantity, status, featured, new_arrival,
-    gender_or_target, variants
-  } = req.body;
+  const { name, category_id, description, short_description, price, sale_price, sku, gender, featured, new_arrival, status, variants } = req.body;
 
-  if (!category_id || !name || !regular_price) {
-    return res.status(400).json({ success: false, message: 'Category, name, and regular price are required.' });
-  }
+  const slug = slugify(name) + '-' + Date.now();
 
-  const slug = slugify(name);
-  const [existing] = await pool.query('SELECT id FROM products WHERE slug = ?', [slug]);
-  if (existing.length > 0) {
-    return res.status(409).json({ success: false, message: 'A product with a similar name already exists.' });
-  }
-
-  const [result] = await pool.query(
-    `INSERT INTO products
-     (category_id, name, slug, sku, brand, short_description, full_description,
-      regular_price, sale_price, stock_quantity, status, featured, new_arrival, gender_or_target)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      category_id, name, slug, sku || null, brand || null,
-      short_description || null, full_description || null,
-      regular_price, sale_price || null, stock_quantity || 0,
-      status || 'active', featured ? 1 : 0, new_arrival ? 1 : 0,
-      gender_or_target || 'n/a'
-    ]
+  const [result] = await pool.execute(
+    `INSERT INTO products (name, slug, category_id, description, short_description, price, sale_price, sku, gender, featured, new_arrival, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, slug, category_id, description, short_description, price, sale_price || null, sku, gender || 'unisex', featured ? 1 : 0, new_arrival ? 1 : 0, status || 'active']
   );
 
   const productId = result.insertId;
 
+  // Handle uploaded files via ImgBB
   if (req.files && req.files.length > 0) {
-    const values = req.files.map((file, idx) => [productId, `/uploads/products/${file.filename}`, idx]);
-    await pool.query('INSERT INTO product_images (product_id, image_path, sort_order) VALUES ?', [values]);
-  }
-
-  if (variants) {
-    try {
-      const parsedVariants = typeof variants === 'string' ? JSON.parse(variants) : variants;
-      if (Array.isArray(parsedVariants) && parsedVariants.length > 0) {
-        const values = parsedVariants.map(v => [
-          productId, v.size || null, v.color || null, v.sku || null,
-          v.price_adjustment || 0, v.stock_quantity || 0
-        ]);
-        await pool.query(
-          'INSERT INTO product_variants (product_id, size, color, sku, price_adjustment, stock_quantity) VALUES ?',
-          [values]
-        );
-      }
-    } catch (e) {
-      // Ignore malformed variants JSON rather than failing the whole request
-      console.warn('Could not parse variants JSON:', e.message);
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      const imageUrl = await uploadToImgBB(file.buffer);
+      await pool.execute(
+        `INSERT INTO product_images (product_id, image_url, is_primary, display_order) VALUES (?, ?, ?, ?)`,
+        [productId, imageUrl, i === 0 ? 1 : 0, i]
+      );
     }
   }
 
-  res.status(201).json({ success: true, message: 'Product created.', productId });
+  // Handle variants
+  if (variants) {
+    const parsedVariants = typeof variants === 'string' ? JSON.parse(variants) : variants;
+    for (const v of parsedVariants) {
+      await pool.execute(
+        `INSERT INTO product_variants (product_id, size, color, stock, sku) VALUES (?, ?, ?, ?, ?)`,
+        [productId, v.size, v.color, v.stock || 0, v.sku || `${sku}-${v.size}-${v.color}`]
+      );
+    }
+  }
+
+  res.status(201).json({ success: true, message: 'Product created successfully', data: { id: productId, slug } });
 });
 
-// PUT /api/products/:id  (admin)
+// PUT /api/products/:id (Admin update product)
 const updateProduct = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const [existingRows] = await pool.query('SELECT * FROM products WHERE id = ?', [id]);
-  if (existingRows.length === 0) {
-    return res.status(404).json({ success: false, message: 'Product not found.' });
-  }
-  const existing = existingRows[0];
+  const productId = req.params.id;
+  const { name, category_id, description, short_description, price, sale_price, sku, gender, featured, new_arrival, status } = req.body;
 
-  const {
-    category_id, name, sku, brand, short_description, full_description,
-    regular_price, sale_price, stock_quantity, status, featured, new_arrival,
-    gender_or_target
-  } = req.body;
-
-  const slug = name ? slugify(name) : existing.slug;
-
-  await pool.query(
-    `UPDATE products SET
-       category_id = ?, name = ?, slug = ?, sku = ?, brand = ?,
-       short_description = ?, full_description = ?, regular_price = ?,
-       sale_price = ?, stock_quantity = ?, status = ?, featured = ?,
-       new_arrival = ?, gender_or_target = ?
-     WHERE id = ?`,
-    [
-      category_id || existing.category_id,
-      name || existing.name,
-      slug,
-      sku ?? existing.sku,
-      brand ?? existing.brand,
-      short_description ?? existing.short_description,
-      full_description ?? existing.full_description,
-      regular_price || existing.regular_price,
-      sale_price === '' ? null : (sale_price ?? existing.sale_price),
-      stock_quantity ?? existing.stock_quantity,
-      status || existing.status,
-      featured !== undefined ? (featured ? 1 : 0) : existing.featured,
-      new_arrival !== undefined ? (new_arrival ? 1 : 0) : existing.new_arrival,
-      gender_or_target || existing.gender_or_target,
-      id
-    ]
+  await pool.execute(
+    `UPDATE products SET name=?, category_id=?, description=?, short_description=?, price=?, sale_price=?, sku=?, gender=?, featured=?, new_arrival=?, status=? WHERE id=?`,
+    [name, category_id, description, short_description, price, sale_price || null, sku, gender, featured ? 1 : 0, new_arrival ? 1 : 0, status, productId]
   );
 
   if (req.files && req.files.length > 0) {
-    const [countRows] = await pool.query('SELECT COUNT(*) AS c FROM product_images WHERE product_id = ?', [id]);
-    let sortOrder = countRows[0].c;
-    const values = req.files.map(file => [id, `/uploads/products/${file.filename}`, sortOrder++]);
-    await pool.query('INSERT INTO product_images (product_id, image_path, sort_order) VALUES ?', [values]);
+    for (let i = 0; i < req.files.length; i++) {
+      const file = req.files[i];
+      const imageUrl = await uploadToImgBB(file.buffer);
+      await pool.execute(
+        `INSERT INTO product_images (product_id, image_url, is_primary, display_order) VALUES (?, ?, ?, ?)`,
+        [productId, imageUrl, 0, i]
+      );
+    }
   }
 
-  res.json({ success: true, message: 'Product updated.' });
+  res.json({ success: true, message: 'Product updated successfully' });
 });
 
-// DELETE /api/products/:id  (admin) — blocks deletion if referenced by an order
+// DELETE /api/products/:id (Admin delete product)
 const deleteProduct = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const [orderItems] = await pool.query('SELECT id FROM order_items WHERE product_id = ? LIMIT 1', [id]);
-  if (orderItems.length > 0) {
-    // Soft delete: mark inactive instead of destroying order history integrity
-    await pool.query("UPDATE products SET status = 'inactive' WHERE id = ?", [id]);
-    return res.json({
-      success: true,
-      message: 'This product has past orders, so it was deactivated instead of permanently deleted (to preserve order history).'
-    });
-  }
-
-  await pool.query('DELETE FROM products WHERE id = ?', [id]);
-  res.json({ success: true, message: 'Product permanently deleted.' });
-});
-
-// DELETE /api/products/images/:imageId  (admin)
-const deleteProductImage = asyncHandler(async (req, res) => {
-  await pool.query('DELETE FROM product_images WHERE id = ?', [req.params.imageId]);
-  res.json({ success: true, message: 'Image removed.' });
+  await pool.execute(`UPDATE products SET status = 'inactive' WHERE id = ?`, [req.params.id]);
+  res.json({ success: true, message: 'Product deleted successfully' });
 });
 
 module.exports = {
-  getProducts, getProductBySlug, getProductById,
-  createProduct, updateProduct, deleteProduct, deleteProductImage
+  getProducts,
+  getProductBySlug,
+  createProduct,
+  updateProduct,
+  deleteProduct
 };
