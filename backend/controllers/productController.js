@@ -26,7 +26,7 @@ exports.getProductBySlug = async (req, res) => {
 exports.createProduct = async (req, res) => {
   try {
     const { 
-      name, slug, short_description, full_description, description, 
+      name, title, slug, short_description, full_description, description, 
       regular_price, price, sale_price, stock_quantity, stock, 
       category_id, image_base64 
     } = req.body;
@@ -36,18 +36,19 @@ exports.createProduct = async (req, res) => {
       image_url = await uploadToImgBB(image_base64);
     }
 
+    const productName = name || title || 'product';
     const finalShortDesc = short_description || description || '';
     const finalFullDesc = full_description || description || '';
     const finalRegPrice = regular_price || price || 0;
     const finalSalePrice = sale_price || null;
     const finalStock = stock_quantity !== undefined ? stock_quantity : (stock || 0);
-    const finalSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+    const finalSlug = slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 
     const [result] = await db.query(
       `INSERT INTO products 
         (name, slug, short_description, full_description, regular_price, sale_price, stock_quantity, category_id, image_url) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null, image_url]
+      [productName, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null, image_url]
     );
 
     res.status(201).json({ id: result.insertId, message: 'Product created successfully', image_url });
@@ -60,22 +61,24 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { 
-      name, slug, short_description, full_description, description, 
+      name, title, slug, short_description, full_description, description, 
       regular_price, price, sale_price, stock_quantity, stock, 
       category_id, image_base64 
     } = req.body;
     const productId = req.params.id;
 
+    const productName = name || title || 'product';
     const finalShortDesc = short_description || description || '';
     const finalFullDesc = full_description || description || '';
     const finalRegPrice = regular_price || price || 0;
     const finalSalePrice = sale_price || null;
     const finalStock = stock_quantity !== undefined ? stock_quantity : (stock || 0);
+    const finalSlug = slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 
     let query = `UPDATE products SET 
       name=?, slug=?, short_description=?, full_description=?, 
       regular_price=?, sale_price=?, stock_quantity=?, category_id=?`;
-    let queryParams = [name, slug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null];
+    let queryParams = [productName, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null];
 
     if (image_base64) {
       const image_url = await uploadToImgBB(image_base64);
