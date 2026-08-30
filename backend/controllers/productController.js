@@ -1,5 +1,5 @@
 const db = require('../config/database');
-const uploadToImgBB = require('../utils/imgbbHelper');
+const uploadToImgBB = require('../utils/helpers');
 // Get all products
 exports.getProducts = async (req, res) => {
   try {
