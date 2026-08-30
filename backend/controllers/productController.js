@@ -1,5 +1,4 @@
 const db = require('../config/database');
-const uploadToImgBB = require('../utils/helpers');
 
 // Get all products
 exports.getProducts = async (req, res) => {
@@ -28,13 +27,8 @@ exports.createProduct = async (req, res) => {
     const { 
       name, title, slug, short_description, full_description, description, 
       regular_price, price, sale_price, stock_quantity, stock, 
-      category_id, image_base64 
+      category_id 
     } = req.body;
-
-    let image_url = null;
-    if (image_base64) {
-      image_url = await uploadToImgBB(image_base64);
-    }
 
     const productName = name || title || 'product';
     const finalShortDesc = short_description || description || '';
@@ -46,12 +40,12 @@ exports.createProduct = async (req, res) => {
 
     const [result] = await db.query(
       `INSERT INTO products 
-        (name, slug, short_description, full_description, regular_price, sale_price, stock_quantity, category_id, image_url) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [productName, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null, image_url]
+        (name, slug, short_description, full_description, regular_price, sale_price, stock_quantity, category_id) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [productName, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null]
     );
 
-    res.status(201).json({ id: result.insertId, message: 'Product created successfully', image_url });
+    res.status(201).json({ id: result.insertId, message: 'Product created successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -63,7 +57,7 @@ exports.updateProduct = async (req, res) => {
     const { 
       name, title, slug, short_description, full_description, description, 
       regular_price, price, sale_price, stock_quantity, stock, 
-      category_id, image_base64 
+      category_id 
     } = req.body;
     const productId = req.params.id;
 
@@ -75,19 +69,10 @@ exports.updateProduct = async (req, res) => {
     const finalStock = stock_quantity !== undefined ? stock_quantity : (stock || 0);
     const finalSlug = slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
 
-    let query = `UPDATE products SET 
+    const query = `UPDATE products SET 
       name=?, slug=?, short_description=?, full_description=?, 
-      regular_price=?, sale_price=?, stock_quantity=?, category_id=?`;
-    let queryParams = [productName, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null];
-
-    if (image_base64) {
-      const image_url = await uploadToImgBB(image_base64);
-      query += ', image_url=?';
-      queryParams.push(image_url);
-    }
-
-    query += ' WHERE id=?';
-    queryParams.push(productId);
+      regular_price=?, sale_price=?, stock_quantity=?, category_id=? WHERE id=?`;
+    const queryParams = [productName, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null, productId];
 
     await db.query(query, queryParams);
     res.json({ message: 'Product updated successfully' });
