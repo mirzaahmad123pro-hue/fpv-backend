@@ -8,17 +8,16 @@ const {
   deleteProduct 
 } = require('../controllers/productController');
 const { protect, admin } = require('../middleware/authMiddleware');
-const upload = require('../middleware/uploadMiddleware');
 
 router.route('/')
   .get(getProducts)
-  .post(protect, admin, upload.array('images', 5), createProduct);
+  .post(protect, admin, createProduct);
 
 router.route('/:slug')
   .get(getProductBySlug);
 
 router.route('/:id')
-  .put(protect, admin, upload.array('images', 5), updateProduct)
+  .put(protect, admin, updateProduct)
   .delete(protect, admin, deleteProduct);
 
 module.exports = router;
