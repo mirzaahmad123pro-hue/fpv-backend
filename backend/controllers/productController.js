@@ -11,58 +11,59 @@ async function getTableColumns() {
   }
 }
 
-// Helper to safely resolve category_id (never returns null)
-async function resolveCategoryId(body) {
-  let catId = body.category_id || body.categoryId || body.category;
-  
-  // If valid number
-  if (catId && !isNaN(parseInt(catId, 10)) && parseInt(catId, 10) > 0) {
-    return parseInt(catId, 10);
-  }
-  
-  // If string name passed from frontend dropdown
-  if (typeof catId === 'string' && catId.trim() !== '') {
-    try {
-      const [rows] = await db.query('SELECT id FROM categories WHERE name = ? OR slug = ? LIMIT 1', [catId.trim(), catId.trim()]);
-      if (rows.length > 0) return rows[0].id;
-    } catch (e) {}
-  }
-  
-  // Fallback: Get the first available category ID from database
-  try {
-    const [cats] = await db.query('SELECT id FROM categories ORDER BY id ASC LIMIT 1');
-    if (cats.length > 0) return cats[0].id;
-  } catch (e) {}
-
-  return 1; // Absolute safe fallback
+// Helper to map image fields so frontend always finds the image
+function formatProductImage(product) {
+  if (!product) return product;
+  const img = product.image_url || product.image || product.images || product.thumbnail || null;
+  return {
+    ...product,
+    image_url: img,
+    image: img,
+    images: img ? [img] : []
+  };
 }
 
 // Get all products
 exports.getProducts = async (req, res) => {
   try {
     const [products] = await db.query('SELECT * FROM products ORDER BY created_at DESC');
+    const formattedProducts = products.map(formatProductImage);
+    
     res.json({
       success: true,
-      products: products,
-      data: products
+      products: formattedProducts,
+      data: formattedProducts
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// Get single product by slug or ID
-exports.getProductBySlug = async (req, res) => {
+// Get single product by ID
+exports.getProductById = async (req, res) => {
   try {
-    const param = req.params.slug;
-    const [rows] = await db.query(
-      'SELECT * FROM products WHERE slug = ? OR id = ?',
-      [param, param]
-    );
+    const productId = req.params.id;
+    const [rows] = await db.query('SELECT * FROM products WHERE id = ?', [productId]);
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
-    res.json({ success: true, product: rows[0], data: rows[0] });
+    const formatted = formatProductImage(rows[0]);
+    res.json({ success: true, product: formatted, data: formatted });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Get single product by Slug
+exports.getProductBySlug = async (req, res) => {
+  try {
+    const param = req.params.slug;
+    const [rows] = await db.query('SELECT * FROM products WHERE slug = ? OR id = ?', [param, param]);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+    const formatted = formatProductImage(rows[0]);
+    res.json({ success: true, product: formatted, data: formatted });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -84,7 +85,6 @@ exports.createProduct = async (req, res) => {
 
     const productName = body.name || body.title || 'Untitled Product';
     const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
-    const categoryId = await resolveCategoryId(body);
 
     const candidateData = {
       name: productName,
@@ -98,7 +98,7 @@ exports.createProduct = async (req, res) => {
       sale_price: body.sale_price || null,
       stock_quantity: body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0),
       stock: body.stock !== undefined ? body.stock : (body.stock_quantity || 0),
-      category_id: categoryId,
+      category_id: body.category_id || 1,
       sku: body.sku || null,
       brand: body.brand || null,
       target_gender: body.target_gender || null,
@@ -122,8 +122,8 @@ exports.createProduct = async (req, res) => {
         }
       }
     } else {
-      insertKeys.push('name', 'slug', 'regular_price', 'stock_quantity', 'category_id');
-      insertValues.push(productName, computedSlug, candidateData.regular_price, candidateData.stock_quantity, categoryId);
+      insertKeys.push('name', 'slug', 'regular_price', 'stock_quantity');
+      insertValues.push(productName, computedSlug, candidateData.regular_price, candidateData.stock_quantity);
     }
 
     const placeholders = insertKeys.map(() => '?').join(', ');
@@ -160,7 +160,6 @@ exports.updateProduct = async (req, res) => {
 
     const productName = body.name || body.title || 'Product';
     const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
-    const categoryId = await resolveCategoryId(body);
 
     const candidateData = {
       name: productName,
@@ -174,7 +173,7 @@ exports.updateProduct = async (req, res) => {
       sale_price: body.sale_price || null,
       stock_quantity: body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0),
       stock: body.stock !== undefined ? body.stock : (body.stock_quantity || 0),
-      category_id: categoryId,
+      category_id: body.category_id || 1,
       sku: body.sku || null,
       brand: body.brand || null,
       target_gender: body.target_gender || null,
