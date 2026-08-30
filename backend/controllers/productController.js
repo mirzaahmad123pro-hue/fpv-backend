@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const uploadToImgBB = require('../utils/helpers');
+
 // Get all products
 exports.getProducts = async (req, res) => {
   try {
@@ -24,16 +25,29 @@ exports.getProductBySlug = async (req, res) => {
 // Create product
 exports.createProduct = async (req, res) => {
   try {
-    const { name, slug, description, price, stock, category_id, image_base64 } = req.body;
-    let image_url = null;
+    const { 
+      name, slug, short_description, full_description, description, 
+      regular_price, price, sale_price, stock_quantity, stock, 
+      category_id, image_base64 
+    } = req.body;
 
+    let image_url = null;
     if (image_base64) {
       image_url = await uploadToImgBB(image_base64);
     }
 
+    const finalShortDesc = short_description || description || '';
+    const finalFullDesc = full_description || description || '';
+    const finalRegPrice = regular_price || price || 0;
+    const finalSalePrice = sale_price || null;
+    const finalStock = stock_quantity !== undefined ? stock_quantity : (stock || 0);
+    const finalSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+
     const [result] = await db.query(
-      'INSERT INTO products (name, slug, description, price, stock, category_id, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, slug, description, price, stock, category_id, image_url]
+      `INSERT INTO products 
+        (name, slug, short_description, full_description, regular_price, sale_price, stock_quantity, category_id, image_url) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, finalSlug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null, image_url]
     );
 
     res.status(201).json({ id: result.insertId, message: 'Product created successfully', image_url });
@@ -45,11 +59,23 @@ exports.createProduct = async (req, res) => {
 // Update product
 exports.updateProduct = async (req, res) => {
   try {
-    const { name, slug, description, price, stock, category_id, image_base64 } = req.body;
+    const { 
+      name, slug, short_description, full_description, description, 
+      regular_price, price, sale_price, stock_quantity, stock, 
+      category_id, image_base64 
+    } = req.body;
     const productId = req.params.id;
 
-    let query = 'UPDATE products SET name=?, slug=?, description=?, price=?, stock=?, category_id=?';
-    let queryParams = [name, slug, description, price, stock, category_id];
+    const finalShortDesc = short_description || description || '';
+    const finalFullDesc = full_description || description || '';
+    const finalRegPrice = regular_price || price || 0;
+    const finalSalePrice = sale_price || null;
+    const finalStock = stock_quantity !== undefined ? stock_quantity : (stock || 0);
+
+    let query = `UPDATE products SET 
+      name=?, slug=?, short_description=?, full_description=?, 
+      regular_price=?, sale_price=?, stock_quantity=?, category_id=?`;
+    let queryParams = [name, slug, finalShortDesc, finalFullDesc, finalRegPrice, finalSalePrice, finalStock, category_id || null];
 
     if (image_base64) {
       const image_url = await uploadToImgBB(image_base64);
