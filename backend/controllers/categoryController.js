@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const pool  = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const { slugify } = require('../utils/helpers');
 
