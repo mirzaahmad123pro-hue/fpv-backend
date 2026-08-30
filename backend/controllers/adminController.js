@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const pool = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 
 // GET /api/admin/dashboard
@@ -168,7 +168,7 @@ const getSettings = asyncHandler(async (req, res) => {
   res.json({ success: true, settings });
 });
 
-// PUT /api/admin/settings   body: { key: value, key2: value2, ... }
+// PUT /api/admin/settings    body: { key: value, key2: value2, ... }
 const updateSettings = asyncHandler(async (req, res) => {
   const entries = Object.entries(req.body || {});
   if (entries.length === 0) {
