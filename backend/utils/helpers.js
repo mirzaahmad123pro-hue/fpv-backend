@@ -1,3 +1,5 @@
+const axios = require('axios');
+
 // Small shared helper functions used across controllers.
 
 // Turns "Men's Running Shoes" into "mens-running-shoes"
@@ -6,7 +8,8 @@ function slugify(text) {
     .toString()
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
 
@@ -23,4 +26,27 @@ function formatPKR(amount) {
   return 'Rs. ' + num.toLocaleString('en-PK', { maximumFractionDigits: 0 });
 }
 
-module.exports = { slugify, generateOrderNumber, formatPKR };
+// ImgBB API Upload Function
+async function uploadToImgBB(base64Data) {
+  try {
+    if (!base64Data) return null;
+
+    const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
+    const apiKey = process.env.IMGBB_API_KEY || '0257924d31bc4310078776acd495e8db';
+    
+    const formData = new URLSearchParams();
+    formData.append('image', cleanBase64);
+
+    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, formData);
+
+    if (response.data && response.data.data) {
+      return response.data.data.url || response.data.data.display_url;
+    }
+    return null;
+  } catch (error) {
+    console.error('ImgBB Upload Error:', error.response?.data || error.message);
+    return null;
+  }
+}
+
+module.exports = { slugify, generateOrderNumber, formatPKR, uploadToImgBB };
