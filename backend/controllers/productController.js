@@ -1,5 +1,5 @@
 const db = require('../config/database');
-const uploadToImgBB = require('../utils/helpers');
+const { uploadToImgBB } = require('../utils/helpers');
 
 // Helper to dynamically inspect database columns
 async function getTableColumns() {
