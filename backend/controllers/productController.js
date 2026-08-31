@@ -250,33 +250,3 @@ exports.deleteProduct = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-const axios = require('axios');
-
-async function uploadToImgBB(base64Data) {
-  try {
-    if (!base64Data) return null;
-
-    // Clean base64 string (metadata prefix remove karne ke liye)
-    const cleanBase64 = base64Data.replace(/^data:image\/\w+;base64,/, '');
-    
-    // ImgBB API Key
-    const apiKey = process.env.IMGBB_API_KEY || '0257924d31bc4310078776acd495e8db';
-    
-    const formData = new URLSearchParams();
-    formData.append('image', cleanBase64);
-
-    // Official ImgBB API Call
-    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, formData);
-
-    // Exact response structure from documentation
-    if (response.data && response.data.success && response.data.data) {
-      return response.data.data.url || response.data.data.display_url;
-    }
-    return null;
-  } catch (error) {
-    console.error('ImgBB Upload Error:', error.response?.data || error.message);
-    return null;
-  }
-}
-
-module.exports = uploadToImgBB;
