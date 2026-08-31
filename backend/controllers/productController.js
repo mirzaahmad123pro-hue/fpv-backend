@@ -11,22 +11,51 @@ async function getTableColumns() {
   }
 }
 
-// Helper to map image fields so frontend always finds the image
+// Helper to map image fields so frontend always finds a valid image URL
 function formatProductImage(product) {
   if (!product) return product;
-  const img = product.image_url || product.image || product.images || product.thumbnail || null;
+
+  let img = product.image_url || product.image || product.thumbnail || null;
+
+  // Handle if stored as array or JSON string in 'images'
+  if (!img && product.images) {
+    if (Array.isArray(product.images)) {
+      img = product.images[0];
+    } else if (typeof product.images === 'string') {
+      try {
+        const parsed = JSON.parse(product.images);
+        img = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch (e) {
+        img = product.images;
+      }
+    }
+  }
+
+  // Fallback placeholder if image is missing or empty
+  const defaultPlaceholder = 'https://via.placeholder.com/300x300.png?text=No+Image';
+  const finalImage = (img && typeof img === 'string' && img.trim() !== '') ? img.trim() : defaultPlaceholder;
+
   return {
     ...product,
-    image_url: img,
-    image: img,
-    images: img ? [img] : []
+    image_url: finalImage,
+    image: finalImage,
+    thumbnail: finalImage,
+    images: [finalImage]
   };
 }
 
 // Get all products
 exports.getProducts = async (req, res) => {
   try {
-    const [products] = await db.query('SELECT * FROM products ORDER BY created_at DESC');
+    let query = 'SELECT * FROM products';
+    const cols = await getTableColumns();
+    if (cols.includes('created_at')) {
+      query += ' ORDER BY created_at DESC';
+    } else if (cols.includes('id')) {
+      query += ' ORDER BY id DESC';
+    }
+
+    const [products] = await db.query(query);
     const formattedProducts = products.map(formatProductImage);
     
     res.json({
@@ -73,11 +102,12 @@ exports.getProductBySlug = async (req, res) => {
 exports.createProduct = async (req, res) => {
   try {
     const body = req.body || {};
-    let imageUrl = null;
+    let imageUrl = body.image_url || body.image || null;
 
     if (body.image_base64) {
       try {
-        imageUrl = await uploadToImgBB(body.image_base64);
+        const uploaded = await uploadToImgBB(body.image_base64);
+        if (uploaded) imageUrl = uploaded;
       } catch (imgErr) {
         console.error('Image upload failed:', imgErr);
       }
@@ -105,8 +135,8 @@ exports.createProduct = async (req, res) => {
       status: body.status || 'active',
       is_featured: body.is_featured ? 1 : 0,
       is_new_arrival: body.is_new_arrival ? 1 : 0,
-      image_url: imageUrl || body.image_url || null,
-      image: imageUrl || body.image || null
+      image_url: imageUrl,
+      image: imageUrl
     };
 
     const existingCols = await getTableColumns();
@@ -148,11 +178,12 @@ exports.updateProduct = async (req, res) => {
   try {
     const productId = req.params.id;
     const body = req.body || {};
-    let imageUrl = null;
+    let imageUrl = body.image_url || body.image || null;
 
     if (body.image_base64) {
       try {
-        imageUrl = await uploadToImgBB(body.image_base64);
+        const uploaded = await uploadToImgBB(body.image_base64);
+        if (uploaded) imageUrl = uploaded;
       } catch (imgErr) {
         console.error('Image upload failed:', imgErr);
       }
