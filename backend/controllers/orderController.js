@@ -3,19 +3,46 @@ const { asyncHandler } = require('../middleware/errorMiddleware');
 const { generateOrderNumber } = require('../utils/helpers');
 const { getOrCreateCartId } = require('./cartController');
 
+const VALID_PAYMENT_METHODS = ['cod', 'jazzcash', 'easypaisa', 'bank_transfer'];
+const CANCELLABLE_ORDER_STATUSES = ['pending'];
+
 // POST /api/orders
+// Sent as multipart/form-data so a payment receipt screenshot can be
+// attached for non-COD methods (field name: "receipt").
+// Fields: shipping_address (JSON string: {full_name, phone, address_line,
+//         city, province, postal_code}), payment_method: 'cod'|'jazzcash'|
+//         'easypaisa'|'bank_transfer', notes, transaction_id?, receipt? (file)
 const createOrder = asyncHandler(async (req, res) => {
-  const { shipping_address, payment_method, notes, transaction_id } = req.body;
+  const { payment_method, notes, transaction_id } = req.body;
+
+  // shipping_address arrives as a JSON string in multipart form-data
+  // (form-data can't carry nested objects), but we also accept it as an
+  // already-parsed object in case a JSON request body is used instead —
+  // this keeps the endpoint backward compatible either way.
+  let shipping_address = req.body.shipping_address;
+  if (typeof shipping_address === 'string') {
+    try {
+      shipping_address = JSON.parse(shipping_address);
+    } catch (e) {
+      return res.status(400).json({ success: false, message: 'Invalid shipping address data.' });
+    }
+  }
 
   if (!shipping_address || !shipping_address.full_name || !shipping_address.phone || !shipping_address.address_line || !shipping_address.city) {
     return res.status(400).json({ success: false, message: 'Complete shipping address is required.' });
   }
-  if (!['cod', 'jazzcash', 'easypaisa'].includes(payment_method)) {
+  if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
     return res.status(400).json({ success: false, message: 'Invalid payment method.' });
   }
 
+  // Non-COD methods require proof of payment.
+  const isManualVerificationMethod = payment_method !== 'cod';
+  if (isManualVerificationMethod && !req.file) {
+    return res.status(400).json({ success: false, message: 'Please upload a screenshot/receipt of your payment.' });
+  }
+
   const cartId = await getOrCreateCartId(req.user.id);
-  const [items] = await pool.promise().query(
+  const [items] = await pool.query(
     `SELECT ci.id, ci.quantity, ci.variant_id, p.id AS product_id, p.name, p.sku,
             p.regular_price, p.sale_price, p.stock_quantity,
             v.price_adjustment, v.stock_quantity AS variant_stock
@@ -38,7 +65,7 @@ const createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  const [settingsRows] = await pool.promise().query(
+  const [settingsRows] = await pool.query(
     "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('shipping_fee','free_shipping_threshold')"
   );
   const settings = Object.fromEntries(settingsRows.map(s => [s.setting_key, s.setting_value]));
@@ -68,14 +95,21 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const addressText = `${shipping_address.full_name}, ${shipping_address.phone}\n${shipping_address.address_line}, ${shipping_address.city}${shipping_address.province ? ', ' + shipping_address.province : ''}${shipping_address.postal_code ? ' ' + shipping_address.postal_code : ''}`;
 
-  const connection = await pool.promise().getConnection();
+  // COD stays 'pending' (fulfillment-based — nothing to verify up front).
+  // JazzCash/Easypaisa/Bank Transfer go to 'pending_verification' instead
+  // of ever silently auto-completing — an admin must check the uploaded
+  // receipt and mark it Paid/Rejected before the order is treated as paid.
+  const paymentStatus = isManualVerificationMethod ? 'pending_verification' : 'pending';
+  const receiptPath = req.file ? `/uploads/receipts/${req.file.filename}` : null;
+
+  const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
 
     const [orderResult] = await connection.query(
       `INSERT INTO orders (user_id, order_number, subtotal, shipping_fee, discount, total_amount, status, payment_status, payment_method, shipping_address, notes)
-       VALUES (?, ?, ?, ?, 0, ?, 'pending', 'pending', ?, ?, ?)`,
-      [req.user.id, orderNumber, subtotal, shippingFee, totalAmount, payment_method, addressText, notes || null]
+       VALUES (?, ?, ?, ?, 0, ?, 'pending', ?, ?, ?, ?)`,
+      [req.user.id, orderNumber, subtotal, shippingFee, totalAmount, paymentStatus, payment_method, addressText, notes || null]
     );
     const orderId = orderResult.insertId;
 
@@ -95,9 +129,9 @@ const createOrder = asyncHandler(async (req, res) => {
     }
 
     await connection.query(
-      `INSERT INTO payments (order_id, payment_method, transaction_id, amount, status)
-       VALUES (?, ?, ?, ?, 'pending')`,
-      [orderId, payment_method, transaction_id || null, totalAmount]
+      `INSERT INTO payments (order_id, payment_method, transaction_id, receipt_path, amount, status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [orderId, payment_method, transaction_id || null, receiptPath, totalAmount, paymentStatus]
     );
 
     await connection.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
@@ -107,7 +141,7 @@ const createOrder = asyncHandler(async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Order placed successfully.',
-      order: { id: orderId, order_number: orderNumber, total_amount: totalAmount }
+      order: { id: orderId, order_number: orderNumber, total_amount: totalAmount, payment_status: paymentStatus }
     });
   } catch (err) {
     await connection.rollback();
@@ -119,7 +153,7 @@ const createOrder = asyncHandler(async (req, res) => {
 
 // GET /api/orders/my-orders
 const getMyOrders = asyncHandler(async (req, res) => {
-  const [orders] = await pool.promise().query(
+  const [orders] = await pool.query(
     'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
     [req.user.id]
   );
@@ -128,7 +162,7 @@ const getMyOrders = asyncHandler(async (req, res) => {
 
 // GET /api/orders/:id
 const getOrderById = asyncHandler(async (req, res) => {
-  const [orders] = await pool.promise().query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
   if (orders.length === 0) {
     return res.status(404).json({ success: false, message: 'Order not found.' });
   }
@@ -140,10 +174,60 @@ const getOrderById = asyncHandler(async (req, res) => {
     return res.status(403).json({ success: false, message: 'You do not have access to this order.' });
   }
 
-  const [items] = await pool.promise().query('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
-  const [payment] = await pool.promise().query('SELECT * FROM payments WHERE order_id = ?', [order.id]);
+  const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
+  const [payment] = await pool.query('SELECT * FROM payments WHERE order_id = ?', [order.id]);
 
   res.json({ success: true, order: { ...order, items, payment: payment[0] || null } });
 });
 
-module.exports = { createOrder, getMyOrders, getOrderById };
+// PUT /api/orders/:id/cancel  (customer) — body: { reason }
+// Only allowed while the order is still 'pending'. Restores stock for
+// every line item and records the reason the customer gave.
+const cancelOrder = asyncHandler(async (req, res) => {
+  const { reason } = req.body;
+  if (!reason || !reason.trim()) {
+    return res.status(400).json({ success: false, message: 'Please select a cancellation reason.' });
+  }
+
+  const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  if (orders.length === 0) {
+    return res.status(404).json({ success: false, message: 'Order not found.' });
+  }
+  const order = orders[0];
+
+  if (order.user_id !== req.user.id) {
+    return res.status(403).json({ success: false, message: 'You do not have access to this order.' });
+  }
+  if (!CANCELLABLE_ORDER_STATUSES.includes(order.status)) {
+    return res.status(400).json({ success: false, message: `This order can no longer be cancelled (current status: ${order.status}).` });
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const [items] = await connection.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?', [order.id]);
+    for (const item of items) {
+      if (item.variant_id) {
+        await connection.query('UPDATE product_variants SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.variant_id]);
+      } else if (item.product_id) {
+        await connection.query('UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.product_id]);
+      }
+    }
+
+    await connection.query(
+      `UPDATE orders SET status = 'cancelled', cancellation_reason = ?, cancelled_at = NOW() WHERE id = ?`,
+      [reason.trim(), order.id]
+    );
+
+    await connection.commit();
+    res.json({ success: true, message: 'Order cancelled.' });
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
+});
+
+module.exports = { createOrder, getMyOrders, getOrderById, cancelOrder };
