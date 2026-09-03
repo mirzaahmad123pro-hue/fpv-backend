@@ -4,8 +4,6 @@ const { generateOrderNumber } = require('../utils/helpers');
 const { getOrCreateCartId } = require('./cartController');
 
 // POST /api/orders
-// Body: { shipping_address: {full_name, phone, address_line, city, province, postal_code},
-//         payment_method: 'cod'|'jazzcash'|'easypaisa', notes, transaction_id? }
 const createOrder = asyncHandler(async (req, res) => {
   const { shipping_address, payment_method, notes, transaction_id } = req.body;
 
@@ -17,7 +15,7 @@ const createOrder = asyncHandler(async (req, res) => {
   }
 
   const cartId = await getOrCreateCartId(req.user.id);
-  const [items] = await pool.query(
+  const [items] = await pool.promise().query(
     `SELECT ci.id, ci.quantity, ci.variant_id, p.id AS product_id, p.name, p.sku,
             p.regular_price, p.sale_price, p.stock_quantity,
             v.price_adjustment, v.stock_quantity AS variant_stock
@@ -40,7 +38,7 @@ const createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  const [settingsRows] = await pool.query(
+  const [settingsRows] = await pool.promise().query(
     "SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('shipping_fee','free_shipping_threshold')"
   );
   const settings = Object.fromEntries(settingsRows.map(s => [s.setting_key, s.setting_value]));
@@ -70,7 +68,7 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const addressText = `${shipping_address.full_name}, ${shipping_address.phone}\n${shipping_address.address_line}, ${shipping_address.city}${shipping_address.province ? ', ' + shipping_address.province : ''}${shipping_address.postal_code ? ' ' + shipping_address.postal_code : ''}`;
 
-  const connection = await pool.getConnection();
+  const connection = await pool.promise().getConnection();
   try {
     await connection.beginTransaction();
 
@@ -121,7 +119,7 @@ const createOrder = asyncHandler(async (req, res) => {
 
 // GET /api/orders/my-orders
 const getMyOrders = asyncHandler(async (req, res) => {
-  const [orders] = await pool.query(
+  const [orders] = await pool.promise().query(
     'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
     [req.user.id]
   );
@@ -130,7 +128,7 @@ const getMyOrders = asyncHandler(async (req, res) => {
 
 // GET /api/orders/:id
 const getOrderById = asyncHandler(async (req, res) => {
-  const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  const [orders] = await pool.promise().query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
   if (orders.length === 0) {
     return res.status(404).json({ success: false, message: 'Order not found.' });
   }
@@ -142,8 +140,8 @@ const getOrderById = asyncHandler(async (req, res) => {
     return res.status(403).json({ success: false, message: 'You do not have access to this order.' });
   }
 
-  const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
-  const [payment] = await pool.query('SELECT * FROM payments WHERE order_id = ?', [order.id]);
+  const [items] = await pool.promise().query('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
+  const [payment] = await pool.promise().query('SELECT * FROM payments WHERE order_id = ?', [order.id]);
 
   res.json({ success: true, order: { ...order, items, payment: payment[0] || null } });
 });
