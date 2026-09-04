@@ -16,10 +16,6 @@ const pool = mysql.createPool({
   dateStrings: true
 });
 
-// Self-references for universal compatibility across all controllers
-pool.pool = pool;
-pool.db = pool;
-
 async function testConnection() {
   try {
     const conn = await pool.getConnection();
@@ -30,6 +26,14 @@ async function testConnection() {
   }
 }
 
-pool.testConnection = testConnection;
+// Universal export object to safely support all controller import styles
+const dbExport = {
+  pool,
+  db: pool,
+  query: (...args) => pool.query(...args),
+  execute: (...args) => pool.execute(...args),
+  getConnection: (...args) => pool.getConnection(...args),
+  testConnection
+};
 
-module.exports = pool;
+module.exports = dbExport;
