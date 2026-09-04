@@ -1,4 +1,3 @@
-// Database connection pool for MySQL using mysql2 (promise API).
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
@@ -17,17 +16,14 @@ const pool = mysql.createPool({
   dateStrings: true
 });
 
-// Quick helper used at server startup to confirm the DB is reachable.
 async function testConnection() {
   try {
     const conn = await pool.getConnection();
     console.log('✅ Connected to MySQL database:', process.env.DB_NAME || 'defaultdb');
     conn.release();
   } catch (err) {
-    console.error('❌ Could not connect to MySQL database.');
-    console.error('   Error:', err.message);
+    console.error('❌ Could not connect to MySQL database:', err.message);
   }
 }
 
-module.exports = pool;
-module.exports.testConnection = testConnection;
+module.exports = { pool, testConnection };
