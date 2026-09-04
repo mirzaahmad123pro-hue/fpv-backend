@@ -5,7 +5,7 @@ const pool = mysql.createPool({
   host: process.env.DB_HOST || 'fpv-mysql-mirzaahmad123pro-se4b.i.aivencloud.com',
   port: process.env.DB_PORT || 15165,
   user: process.env.DB_USER || 'avnadmin',
-  password: process.env.DB_PASSWORD || 'AVNS_GYUHL63Q1GjZU6EUtYX',
+  password: process.env.DB_PASSWORD || 'AVNS_GYUHL63Q1GjZU6EUrYX',
   database: process.env.DB_NAME || 'defaultdb',
   ssl: {
     rejectUnauthorized: false
@@ -15,6 +15,10 @@ const pool = mysql.createPool({
   queueLimit: 0,
   dateStrings: true
 });
+
+// Self-references for universal compatibility across all controllers
+pool.pool = pool;
+pool.db = pool;
 
 async function testConnection() {
   try {
@@ -26,4 +30,6 @@ async function testConnection() {
   }
 }
 
-module.exports = { pool, testConnection };
+pool.testConnection = testConnection;
+
+module.exports = pool;
