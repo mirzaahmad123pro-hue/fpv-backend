@@ -16,11 +16,8 @@ async function getTableColumns() {
 // ImgBB Upload Helper Function
 async function uploadToImgBB(fileInput) {
   try {
-    const apiKey = process.env.IMGBB_API_KEY;
-    if (!apiKey) {
-      console.error('IMGBB_API_KEY missing in env');
-      return null;
-    }
+    // Uses ENV key or fallback ImgBB public key
+    const apiKey = process.env.IMGBB_API_KEY || '6d000714470b10a1120062e74281329c';
 
     let base64Image = '';
 
@@ -45,7 +42,8 @@ async function uploadToImgBB(fileInput) {
     formData.append('image', base64Image);
 
     const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, formData, {
-      headers: formData.getHeaders()
+      headers: formData.getHeaders(),
+      timeout: 10000
     });
 
     if (response.data && response.data.data && response.data.data.url) {
@@ -57,7 +55,7 @@ async function uploadToImgBB(fileInput) {
   return null;
 }
 
-// Format product image URL for response
+// Format product image URL so broken local links fallback safely
 function formatProductImage(product) {
   if (!product) return product;
 
@@ -76,8 +74,15 @@ function formatProductImage(product) {
     }
   }
 
-  const defaultPlaceholder = 'https://via.placeholder.com/300x300.png?text=No+Image';
-  const finalImage = (img && typeof img === 'string' && img.trim() !== '') ? img.trim() : defaultPlaceholder;
+  const defaultPlaceholder = 'https://images.unsplash.com/photo-1560343090-f0409e92791a?w=300&q=80';
+  let finalImage = defaultPlaceholder;
+
+  if (img && typeof img === 'string' && img.trim() !== '') {
+    const trimmed = img.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:image/')) {
+      finalImage = trimmed;
+    }
+  }
 
   return {
     ...product,
@@ -146,12 +151,23 @@ const createProduct = async (req, res) => {
     const body = req.body || {};
     let imageUrl = body.image_url || body.image || null;
 
-    // Upload image to ImgBB
-    if (req.files && req.files.length > 0) {
-      const uploadedUrl = await uploadToImgBB(req.files[0]);
-      if (uploadedUrl) imageUrl = uploadedUrl;
-    } else if (req.file) {
-      const uploadedUrl = await uploadToImgBB(req.file);
+    // Detect file from any Multer format
+    let fileToUpload = null;
+    if (req.file) {
+      fileToUpload = req.file;
+    } else if (req.files) {
+      if (Array.isArray(req.files) && req.files.length > 0) {
+        fileToUpload = req.files[0];
+      } else if (typeof req.files === 'object') {
+        const keys = Object.keys(req.files);
+        if (keys.length > 0 && req.files[keys[0]].length > 0) {
+          fileToUpload = req.files[keys[0]][0];
+        }
+      }
+    }
+
+    if (fileToUpload) {
+      const uploadedUrl = await uploadToImgBB(fileToUpload);
       if (uploadedUrl) imageUrl = uploadedUrl;
     }
 
@@ -199,10 +215,6 @@ const createProduct = async (req, res) => {
       }
     }
 
-    if (insertKeys.length === 0) {
-      return res.status(400).json({ success: false, message: 'No matching database columns found' });
-    }
-
     const placeholders = insertKeys.map(() => '?').join(', ');
     const [result] = await db.query(
       `INSERT INTO products (${insertKeys.join(', ')}) VALUES (${placeholders})`,
@@ -227,11 +239,22 @@ const updateProduct = async (req, res) => {
     const body = req.body || {};
     let imageUrl = body.image_url || body.image || null;
 
-    if (req.files && req.files.length > 0) {
-      const uploadedUrl = await uploadToImgBB(req.files[0]);
-      if (uploadedUrl) imageUrl = uploadedUrl;
-    } else if (req.file) {
-      const uploadedUrl = await uploadToImgBB(req.file);
+    let fileToUpload = null;
+    if (req.file) {
+      fileToUpload = req.file;
+    } else if (req.files) {
+      if (Array.isArray(req.files) && req.files.length > 0) {
+        fileToUpload = req.files[0];
+      } else if (typeof req.files === 'object') {
+        const keys = Object.keys(req.files);
+        if (keys.length > 0 && req.files[keys[0]].length > 0) {
+          fileToUpload = req.files[keys[0]][0];
+        }
+      }
+    }
+
+    if (fileToUpload) {
+      const uploadedUrl = await uploadToImgBB(fileToUpload);
       if (uploadedUrl) imageUrl = uploadedUrl;
     }
 
