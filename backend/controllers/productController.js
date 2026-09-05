@@ -12,7 +12,7 @@ async function getTableColumns() {
   }
 }
 
-// Reliable ImgBB Upload Helper using User's ImgBB API Key
+// Reliable ImgBB Upload Helper
 async function uploadToImgBB(fileInput) {
   try {
     const apiKey = process.env.IMGBB_API_KEY || '82458d27aadfb56a92f2228e1d4e8b29';
@@ -20,7 +20,7 @@ async function uploadToImgBB(fileInput) {
 
     if (!fileInput) return null;
 
-    // 1. Multer Memory or Disk File Object
+    // 1. Multer File Object
     if (typeof fileInput === 'object') {
       if (fileInput.buffer) {
         base64Data = fileInput.buffer.toString('base64');
@@ -29,20 +29,20 @@ async function uploadToImgBB(fileInput) {
         try { fs.unlinkSync(fileInput.path); } catch (e) {}
       }
     } 
-    // 2. Base64 String or File Path
+    // 2. String (Base64 or File Path)
     else if (typeof fileInput === 'string') {
-      if (fileInput.startsWith('data:image')) {
-        base64Data = fileInput.split(',')[1];
-      } else if (fs.existsSync(fileInput)) {
-        base64Data = fs.readFileSync(fileInput, { encoding: 'base64' });
+      let str = fileInput.trim();
+      if (str.startsWith('data:image')) {
+        base64Data = str.split(',')[1];
+      } else if (fs.existsSync(str)) {
+        base64Data = fs.readFileSync(str, { encoding: 'base64' });
       } else {
-        base64Data = fileInput;
+        base64Data = str;
       }
     }
 
     if (!base64Data) return null;
 
-    // Direct Base64 URL Encoding (No form-data header/stream issues)
     const params = new URLSearchParams();
     params.append('image', base64Data);
 
@@ -61,7 +61,62 @@ async function uploadToImgBB(fileInput) {
   return null;
 }
 
-// Format product image URL so missing links fallback to a neutral placeholder
+// Auto-detect and resolve image URL (Files, Base64, or direct links)
+async function resolveImageUrl(req) {
+  const body = req.body || {};
+
+  // 1. Multer Files
+  let fileToUpload = null;
+  if (req.file) {
+    fileToUpload = req.file;
+  } else if (req.files) {
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      fileToUpload = req.files[0];
+    } else if (typeof req.files === 'object') {
+      const keys = Object.keys(req.files);
+      if (keys.length > 0 && req.files[keys[0]] && req.files[keys[0]].length > 0) {
+        fileToUpload = req.files[keys[0]][0];
+      }
+    }
+  }
+
+  if (fileToUpload) {
+    const uploadedUrl = await uploadToImgBB(fileToUpload);
+    if (uploadedUrl) return uploadedUrl;
+  }
+
+  // 2. Body inputs (image_base64, image_url, image, images)
+  let candidate = body.image_base64 || body.image_url || body.image || body.thumbnail || null;
+
+  if (!candidate && body.images) {
+    if (Array.isArray(body.images) && body.images.length > 0) candidate = body.images[0];
+    else if (typeof body.images === 'string') {
+      try {
+        const parsed = JSON.parse(body.images);
+        candidate = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch (e) {
+        candidate = body.images;
+      }
+    }
+  }
+
+  if (!candidate) return null;
+
+  if (typeof candidate === 'string') {
+    const trimmed = candidate.trim();
+    // If it's already a clean external URL (ImgBB / Unsplash / etc.), return directly
+    if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) && !trimmed.includes('localhost') && !trimmed.includes('/uploads/')) {
+      return trimmed;
+    }
+    // If it's Base64 or local path -> Upload to ImgBB
+    const uploadedUrl = await uploadToImgBB(trimmed);
+    if (uploadedUrl) return uploadedUrl;
+  }
+
+  return null;
+}
+
+// Format product response for frontend
 function formatProductImage(product) {
   if (!product) return product;
 
@@ -80,7 +135,6 @@ function formatProductImage(product) {
     }
   }
 
-  // Neutral Placeholder Image
   const defaultPlaceholder = 'https://placehold.co/300x300/1e293b/e2e8f0?text=No+Image';
   let finalImage = defaultPlaceholder;
 
@@ -156,32 +210,7 @@ const getProductBySlug = async (req, res) => {
 const createProduct = async (req, res) => {
   try {
     const body = req.body || {};
-    let imageUrl = body.image_url || body.image || null;
-
-    // Detect file from any Multer format
-    let fileToUpload = null;
-    if (req.file) {
-      fileToUpload = req.file;
-    } else if (req.files) {
-      if (Array.isArray(req.files) && req.files.length > 0) {
-        fileToUpload = req.files[0];
-      } else if (typeof req.files === 'object') {
-        const keys = Object.keys(req.files);
-        if (keys.length > 0 && req.files[keys[0]].length > 0) {
-          fileToUpload = req.files[keys[0]][0];
-        }
-      }
-    }
-
-    if (fileToUpload) {
-      const uploadedUrl = await uploadToImgBB(fileToUpload);
-      if (uploadedUrl) imageUrl = uploadedUrl;
-    }
-
-    if (!imageUrl && body.image_base64) {
-      const uploadedUrl = await uploadToImgBB(body.image_base64);
-      if (uploadedUrl) imageUrl = uploadedUrl;
-    }
+    const imageUrl = await resolveImageUrl(req);
 
     const productName = body.name || body.title || 'Untitled Product';
     const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
@@ -244,55 +273,43 @@ const updateProduct = async (req, res) => {
   try {
     const productId = req.params.id;
     const body = req.body || {};
-    let imageUrl = body.image_url || body.image || null;
 
-    let fileToUpload = null;
-    if (req.file) {
-      fileToUpload = req.file;
-    } else if (req.files) {
-      if (Array.isArray(req.files) && req.files.length > 0) {
-        fileToUpload = req.files[0];
-      } else if (typeof req.files === 'object') {
-        const keys = Object.keys(req.files);
-        if (keys.length > 0 && req.files[keys[0]].length > 0) {
-          fileToUpload = req.files[keys[0]][0];
-        }
-      }
+    const imageUrl = await resolveImageUrl(req);
+
+    const productName = body.name || body.title;
+    const computedSlug = productName ? String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '') : null;
+
+    const candidateData = {};
+    if (productName) {
+      candidateData.name = productName;
+      candidateData.title = productName;
+      if (computedSlug) candidateData.slug = computedSlug;
     }
-
-    if (fileToUpload) {
-      const uploadedUrl = await uploadToImgBB(fileToUpload);
-      if (uploadedUrl) imageUrl = uploadedUrl;
+    if (body.short_description || body.description) {
+      candidateData.short_description = body.short_description || body.description;
+      candidateData.description = body.short_description || body.description;
     }
-
-    if (!imageUrl && body.image_base64) {
-      const uploadedUrl = await uploadToImgBB(body.image_base64);
-      if (uploadedUrl) imageUrl = uploadedUrl;
+    if (body.full_description || body.description) {
+      candidateData.full_description = body.full_description || body.description;
     }
-
-    const productName = body.name || body.title || 'Product';
-    const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
-
-    const candidateData = {
-      name: productName,
-      title: productName,
-      slug: computedSlug,
-      short_description: body.short_description || body.description || '',
-      full_description: body.full_description || body.description || '',
-      description: body.description || body.short_description || '',
-      regular_price: body.regular_price ? parseFloat(body.regular_price) : parseFloat(body.price || 0),
-      sale_price: body.sale_price ? parseFloat(body.sale_price) : null,
-      price: parseFloat(body.regular_price || body.price || 0),
-      stock_quantity: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
-      stock: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
-      category_id: body.category_id ? parseInt(body.category_id, 10) : 1,
-      sku: body.sku || null,
-      brand: body.brand || null,
-      target_gender: body.target_gender || null,
-      status: body.status || 'active',
-      is_featured: (body.is_featured === 'true' || body.is_featured === true || body.is_featured === '1' || body.is_featured === 1) ? 1 : 0,
-      is_new_arrival: (body.is_new_arrival === 'true' || body.is_new_arrival === true || body.is_new_arrival === '1' || body.is_new_arrival === 1) ? 1 : 0
-    };
+    if (body.regular_price || body.price) {
+      const p = parseFloat(body.regular_price || body.price);
+      candidateData.regular_price = p;
+      candidateData.price = p;
+    }
+    if (body.sale_price !== undefined && body.sale_price !== '') {
+      candidateData.sale_price = body.sale_price ? parseFloat(body.sale_price) : null;
+    }
+    if (body.stock_quantity !== undefined || body.stock !== undefined) {
+      const s = parseInt(body.stock_quantity !== undefined ? body.stock_quantity : body.stock, 10);
+      candidateData.stock_quantity = s;
+      candidateData.stock = s;
+    }
+    if (body.category_id) candidateData.category_id = parseInt(body.category_id, 10);
+    if (body.sku) candidateData.sku = body.sku;
+    if (body.brand) candidateData.brand = body.brand;
+    if (body.target_gender) candidateData.target_gender = body.target_gender;
+    if (body.status) candidateData.status = body.status;
 
     if (imageUrl) {
       candidateData.image_url = imageUrl;
@@ -317,7 +334,7 @@ const updateProduct = async (req, res) => {
       await db.query(`UPDATE products SET ${updateSets.join(', ')} WHERE id = ?`, updateValues);
     }
 
-    res.json({ success: true, message: 'Product updated successfully' });
+    res.json({ success: true, message: 'Product updated successfully', image_url: imageUrl });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
