@@ -10,7 +10,7 @@ async function getTableColumns() {
   }
 }
 
-// ImgBB Upload with URLSearchParams and explicit Headers
+// ImgBB Upload with URLSearchParams and Browser User-Agent Bypass
 async function uploadToImgBB(fileObj) {
   try {
     const apiKey = process.env.IMGBB_API_KEY || 'a4176249482cdaf9904922b86caaa5c3';
@@ -30,11 +30,16 @@ async function uploadToImgBB(fileObj) {
     const params = new URLSearchParams();
     params.append('image', base64String);
 
+    // Browser User-Agent Header Added to Bypass Cloudflare/ImgBB Bot Blocks
     const response = await axios.post(
       `https://api.imgbb.com/1/upload?key=${apiKey}`,
       params.toString(),
       {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'application/json'
+        },
         timeout: 25000
       }
     );
