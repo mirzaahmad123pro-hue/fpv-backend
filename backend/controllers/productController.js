@@ -11,10 +11,10 @@ async function getTableColumns() {
   }
 }
 
-// ImgBB Upload with Detailed Logging
+// ImgBB Upload with New API Key
 async function uploadToImgBB(fileInput) {
   try {
-    const apiKey = process.env.IMGBB_API_KEY || '82458d27aadfb56a92f2228e1d4e8b29';
+    const apiKey = process.env.IMGBB_API_KEY || 'a4176249482cdaf9904922b86caaa5c3';
     let base64Data = '';
 
     if (!fileInput) return null;
@@ -37,10 +37,7 @@ async function uploadToImgBB(fileInput) {
       }
     }
 
-    if (!base64Data) {
-      console.log('⚠️ No valid base64 image data found to upload.');
-      return null;
-    }
+    if (!base64Data) return null;
 
     const params = new URLSearchParams();
     params.append('image', base64Data);
@@ -55,21 +52,15 @@ async function uploadToImgBB(fileInput) {
       return response.data.data.url;
     }
   } catch (error) {
-    console.error('❌ ImgBB Upload Failed:', error.response ? error.response.data : error.message);
+    console.error('❌ ImgBB Upload Failed:', error.response ? JSON.stringify(error.response.data) : error.message);
   }
   return null;
 }
 
 // Resolve Image Payload
 async function resolveImageUrl(req) {
-  console.log('--- UPLOAD DEBUG ---');
-  console.log('req.file:', req.file ? req.file.originalname : 'none');
-  console.log('req.files:', req.files ? Object.keys(req.files) : 'none');
-  console.log('req.body keys:', Object.keys(req.body || {}));
-
   const body = req.body || {};
 
-  // 1. Files
   let fileToUpload = req.file;
   if (!fileToUpload && req.files) {
     if (Array.isArray(req.files) && req.files.length > 0) fileToUpload = req.files[0];
@@ -80,12 +71,10 @@ async function resolveImageUrl(req) {
   }
 
   if (fileToUpload) {
-    console.log('Uploading file object to ImgBB...');
     const uploadedUrl = await uploadToImgBB(fileToUpload);
     if (uploadedUrl) return uploadedUrl;
   }
 
-  // 2. Body Candidate
   let candidate = body.image_base64 || body.image_url || body.image || body.thumbnail || null;
   if (!candidate && body.images) {
     if (Array.isArray(body.images)) candidate = body.images[0];
@@ -102,10 +91,8 @@ async function resolveImageUrl(req) {
   if (candidate && typeof candidate === 'string') {
     const trimmed = candidate.trim();
     if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) && !trimmed.includes('localhost') && !trimmed.includes('/uploads/')) {
-      console.log('Using direct HTTP URL:', trimmed);
       return trimmed;
     }
-    console.log('Uploading body string/base64 to ImgBB...');
     const uploadedUrl = await uploadToImgBB(trimmed);
     if (uploadedUrl) return uploadedUrl;
   }
@@ -239,7 +226,6 @@ const createProduct = async (req, res) => {
 
     res.status(201).json({ success: true, id: result.insertId, message: 'Product created successfully', image_url: imageUrl });
   } catch (error) {
-    console.error('Create Product Error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -291,7 +277,6 @@ const updateProduct = async (req, res) => {
 
     res.json({ success: true, message: 'Product updated successfully', image_url: imageUrl });
   } catch (error) {
-    console.error('Update Product Error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
