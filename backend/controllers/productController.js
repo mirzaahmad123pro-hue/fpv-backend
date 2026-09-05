@@ -1,7 +1,6 @@
 const db = require('../config/database');
 const fs = require('fs');
 const axios = require('axios');
-const FormData = require('form-data');
 
 // Dynamically check existing database columns
 async function getTableColumns() {
@@ -13,49 +12,56 @@ async function getTableColumns() {
   }
 }
 
-// ImgBB Upload Helper Function
+// Reliable ImgBB Upload Helper using User's ImgBB API Key
 async function uploadToImgBB(fileInput) {
   try {
-    // Uses ENV key or fallback ImgBB public key
     const apiKey = process.env.IMGBB_API_KEY || '82458d27aadfb56a92f2228e1d4e8b29';
+    let base64Data = '';
 
-    let base64Image = '';
+    if (!fileInput) return null;
 
-    if (typeof fileInput === 'string') {
-      if (fileInput.startsWith('data:image')) {
-        base64Image = fileInput.split(',')[1];
-      } else if (fs.existsSync(fileInput)) {
-        base64Image = fs.readFileSync(fileInput, { encoding: 'base64' });
-      } else {
-        base64Image = fileInput;
+    // 1. Multer Memory or Disk File Object
+    if (typeof fileInput === 'object') {
+      if (fileInput.buffer) {
+        base64Data = fileInput.buffer.toString('base64');
+      } else if (fileInput.path && fs.existsSync(fileInput.path)) {
+        base64Data = fs.readFileSync(fileInput.path, { encoding: 'base64' });
+        try { fs.unlinkSync(fileInput.path); } catch (e) {}
       }
-    } else if (fileInput && fileInput.buffer) {
-      base64Image = fileInput.buffer.toString('base64');
-    } else if (fileInput && fileInput.path && fs.existsSync(fileInput.path)) {
-      base64Image = fs.readFileSync(fileInput.path, { encoding: 'base64' });
-      try { fs.unlinkSync(fileInput.path); } catch (e) {}
+    } 
+    // 2. Base64 String or File Path
+    else if (typeof fileInput === 'string') {
+      if (fileInput.startsWith('data:image')) {
+        base64Data = fileInput.split(',')[1];
+      } else if (fs.existsSync(fileInput)) {
+        base64Data = fs.readFileSync(fileInput, { encoding: 'base64' });
+      } else {
+        base64Data = fileInput;
+      }
     }
 
-    if (!base64Image) return null;
+    if (!base64Data) return null;
 
-    const formData = new FormData();
-    formData.append('image', base64Image);
+    // Direct Base64 URL Encoding (No form-data header/stream issues)
+    const params = new URLSearchParams();
+    params.append('image', base64Data);
 
-    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, formData, {
-      headers: formData.getHeaders(),
-      timeout: 10000
+    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, params.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 15000
     });
 
     if (response.data && response.data.data && response.data.data.url) {
+      console.log('✅ ImgBB Upload Success:', response.data.data.url);
       return response.data.data.url;
     }
   } catch (error) {
-    console.error('ImgBB Upload Error:', error.response ? error.response.data : error.message);
+    console.error('❌ ImgBB Upload Error:', error.response ? JSON.stringify(error.response.data) : error.message);
   }
   return null;
 }
 
-// Format product image URL so broken local links fallback safely
+// Format product image URL so missing links fallback to a neutral placeholder
 function formatProductImage(product) {
   if (!product) return product;
 
@@ -74,7 +80,8 @@ function formatProductImage(product) {
     }
   }
 
-  const defaultPlaceholder = 'https://images.unsplash.com/photo-1560343090-f0409e92791a?w=300&q=80';
+  // Neutral Placeholder Image
+  const defaultPlaceholder = 'https://placehold.co/300x300/1e293b/e2e8f0?text=No+Image';
   let finalImage = defaultPlaceholder;
 
   if (img && typeof img === 'string' && img.trim() !== '') {
