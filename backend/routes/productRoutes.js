@@ -1,16 +1,31 @@
 const express = require('express');
 const router = express.Router();
-const productController = require('../controllers/productController');
-const { uploadProductImages } = require('../middleware/uploadMiddleware');
+const multer = require('multer');
 
-router.get('/', productController.getProducts);
-router.get('/id/:id', productController.getProductById);
-router.get('/slug/:slug', productController.getProductBySlug);
-router.get('/:id', productController.getProductById);
+// Memory storage keeps file buffers in RAM (perfect for Render)
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
-// uploadProductImages.array('images', 8) lganay se FormData ke text fields aur images parse hon gi
-router.post('/', uploadProductImages.array('images', 8), productController.createProduct);
-router.put('/:id', uploadProductImages.array('images', 8), productController.updateProduct);
-router.delete('/:id', productController.deleteProduct);
+const {
+  getProducts,
+  getProductById,
+  getProductBySlug,
+  createProduct,
+  updateProduct,
+  deleteProduct
+} = require('../controllers/productController');
+
+// Public Routes
+router.get('/', getProducts);
+router.get('/slug/:slug', getProductBySlug);
+router.get('/:id', getProductById);
+
+// Admin Routes with Multer File Parser
+router.post('/', upload.any(), createProduct);
+router.put('/:id', upload.any(), updateProduct);
+router.delete('/:id', deleteProduct);
 
 module.exports = router;
