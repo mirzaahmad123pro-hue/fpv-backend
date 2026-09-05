@@ -3,12 +3,22 @@ const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
 
+// Dynamically check existing database columns
+async function getTableColumns() {
+  try {
+    const [cols] = await db.query('SHOW COLUMNS FROM products');
+    return cols.map(c => c.Field);
+  } catch (error) {
+    return [];
+  }
+}
+
 // ImgBB Upload Helper Function
 async function uploadToImgBB(fileInput) {
   try {
     const apiKey = process.env.IMGBB_API_KEY;
     if (!apiKey) {
-      console.error('IMGBB_API_KEY is missing in environment variables');
+      console.error('IMGBB_API_KEY missing in env');
       return null;
     }
 
@@ -26,7 +36,6 @@ async function uploadToImgBB(fileInput) {
       base64Image = fileInput.buffer.toString('base64');
     } else if (fileInput && fileInput.path && fs.existsSync(fileInput.path)) {
       base64Image = fs.readFileSync(fileInput.path, { encoding: 'base64' });
-      // Upload ke baad local temp file delete kar dein
       try { fs.unlinkSync(fileInput.path); } catch (e) {}
     }
 
@@ -82,7 +91,13 @@ function formatProductImage(product) {
 // Get all products
 const getProducts = async (req, res) => {
   try {
-    const [products] = await db.query('SELECT * FROM products ORDER BY id DESC');
+    const existingCols = await getTableColumns();
+    let query = 'SELECT * FROM products';
+    if (existingCols.includes('id')) {
+      query += ' ORDER BY id DESC';
+    }
+
+    const [products] = await db.query(query);
     const formattedProducts = products.map(formatProductImage);
 
     res.json({
@@ -131,7 +146,7 @@ const createProduct = async (req, res) => {
     const body = req.body || {};
     let imageUrl = body.image_url || body.image || null;
 
-    // 1. Check Multer uploaded file
+    // Upload image to ImgBB
     if (req.files && req.files.length > 0) {
       const uploadedUrl = await uploadToImgBB(req.files[0]);
       if (uploadedUrl) imageUrl = uploadedUrl;
@@ -140,7 +155,6 @@ const createProduct = async (req, res) => {
       if (uploadedUrl) imageUrl = uploadedUrl;
     }
 
-    // 2. Check base64 input if file upload was not present
     if (!imageUrl && body.image_base64) {
       const uploadedUrl = await uploadToImgBB(body.image_base64);
       if (uploadedUrl) imageUrl = uploadedUrl;
@@ -148,13 +162,51 @@ const createProduct = async (req, res) => {
 
     const productName = body.name || body.title || 'Untitled Product';
     const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
-    const regularPrice = parseFloat(body.regular_price || body.price || 0);
-    const stockQuantity = parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10);
 
+    const candidateData = {
+      name: productName,
+      title: productName,
+      slug: computedSlug,
+      short_description: body.short_description || body.description || '',
+      full_description: body.full_description || body.description || '',
+      description: body.description || body.short_description || '',
+      regular_price: body.regular_price ? parseFloat(body.regular_price) : parseFloat(body.price || 0),
+      sale_price: body.sale_price ? parseFloat(body.sale_price) : null,
+      price: parseFloat(body.regular_price || body.price || 0),
+      stock_quantity: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
+      stock: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
+      category_id: body.category_id ? parseInt(body.category_id, 10) : 1,
+      sku: body.sku || null,
+      brand: body.brand || null,
+      target_gender: body.target_gender || null,
+      status: body.status || 'active',
+      is_featured: (body.is_featured === 'true' || body.is_featured === true || body.is_featured === '1' || body.is_featured === 1) ? 1 : 0,
+      is_new_arrival: (body.is_new_arrival === 'true' || body.is_new_arrival === true || body.is_new_arrival === '1' || body.is_new_arrival === 1) ? 1 : 0,
+      image_url: imageUrl,
+      image: imageUrl,
+      images: JSON.stringify(imageUrl ? [imageUrl] : [])
+    };
+
+    const existingCols = await getTableColumns();
+    const insertKeys = [];
+    const insertValues = [];
+
+    for (const col of existingCols) {
+      if (col === 'id' || col === 'created_at' || col === 'updated_at') continue;
+      if (candidateData[col] !== undefined) {
+        insertKeys.push(col);
+        insertValues.push(candidateData[col]);
+      }
+    }
+
+    if (insertKeys.length === 0) {
+      return res.status(400).json({ success: false, message: 'No matching database columns found' });
+    }
+
+    const placeholders = insertKeys.map(() => '?').join(', ');
     const [result] = await db.query(
-      `INSERT INTO products (name, slug, regular_price, price, stock_quantity, stock, image_url, image, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [productName, computedSlug, regularPrice, regularPrice, stockQuantity, stockQuantity, imageUrl, imageUrl, body.status || 'active']
+      `INSERT INTO products (${insertKeys.join(', ')}) VALUES (${placeholders})`,
+      insertValues
     );
 
     res.status(201).json({
@@ -188,17 +240,51 @@ const updateProduct = async (req, res) => {
       if (uploadedUrl) imageUrl = uploadedUrl;
     }
 
-    const updateFields = [];
+    const productName = body.name || body.title || 'Product';
+    const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+
+    const candidateData = {
+      name: productName,
+      title: productName,
+      slug: computedSlug,
+      short_description: body.short_description || body.description || '',
+      full_description: body.full_description || body.description || '',
+      description: body.description || body.short_description || '',
+      regular_price: body.regular_price ? parseFloat(body.regular_price) : parseFloat(body.price || 0),
+      sale_price: body.sale_price ? parseFloat(body.sale_price) : null,
+      price: parseFloat(body.regular_price || body.price || 0),
+      stock_quantity: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
+      stock: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
+      category_id: body.category_id ? parseInt(body.category_id, 10) : 1,
+      sku: body.sku || null,
+      brand: body.brand || null,
+      target_gender: body.target_gender || null,
+      status: body.status || 'active',
+      is_featured: (body.is_featured === 'true' || body.is_featured === true || body.is_featured === '1' || body.is_featured === 1) ? 1 : 0,
+      is_new_arrival: (body.is_new_arrival === 'true' || body.is_new_arrival === true || body.is_new_arrival === '1' || body.is_new_arrival === 1) ? 1 : 0
+    };
+
+    if (imageUrl) {
+      candidateData.image_url = imageUrl;
+      candidateData.image = imageUrl;
+      candidateData.images = JSON.stringify([imageUrl]);
+    }
+
+    const existingCols = await getTableColumns();
+    const updateSets = [];
     const updateValues = [];
 
-    if (body.name) { updateFields.push('name = ?'); updateValues.push(body.name); }
-    if (body.regular_price) { updateFields.push('regular_price = ?', 'price = ?'); updateValues.push(parseFloat(body.regular_price), parseFloat(body.regular_price)); }
-    if (body.stock_quantity !== undefined) { updateFields.push('stock_quantity = ?', 'stock = ?'); updateValues.push(parseInt(body.stock_quantity, 10), parseInt(body.stock_quantity, 10)); }
-    if (imageUrl) { updateFields.push('image_url = ?', 'image = ?'); updateValues.push(imageUrl, imageUrl); }
+    for (const col of existingCols) {
+      if (col === 'id' || col === 'created_at' || col === 'updated_at') continue;
+      if (candidateData[col] !== undefined) {
+        updateSets.push(`${col} = ?`);
+        updateValues.push(candidateData[col]);
+      }
+    }
 
-    if (updateFields.length > 0) {
+    if (updateSets.length > 0) {
       updateValues.push(productId);
-      await db.query(`UPDATE products SET ${updateFields.join(', ')} WHERE id = ?`, updateValues);
+      await db.query(`UPDATE products SET ${updateSets.join(', ')} WHERE id = ?`, updateValues);
     }
 
     res.json({ success: true, message: 'Product updated successfully' });
