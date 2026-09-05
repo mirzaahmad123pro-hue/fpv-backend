@@ -12,35 +12,60 @@ const createOrder = asyncHandler(async (req, res) => {
 
   let shipping_address = req.body.shipping_address;
 
-  // JSON string parse karein ya fallback object banayein
+  // JSON string handle karein
   if (typeof shipping_address === 'string') {
     try {
       shipping_address = JSON.parse(shipping_address);
     } catch (e) {
-      // Agar JSON string parsing fail ho jaye toh string ko address line treat karein
-      shipping_address = {
-        address_line: req.body.shipping_address
-      };
+      shipping_address = { address_line: shipping_address };
     }
   }
 
-  // Address keys normalization (frontend ke kisi bhi format ko standard shape mein convert karein)
-  if (shipping_address && typeof shipping_address === 'object') {
-    shipping_address.full_name = 
-      shipping_address.full_name || 
-      `${shipping_address.first_name || req.body.first_name || ''} ${shipping_address.last_name || req.body.last_name || ''}`.trim() || 
-      req.body.full_name || 
-      req.user?.name || 
-      'Customer';
-
-    shipping_address.phone = shipping_address.phone || req.body.phone || req.body.phone_number;
-    shipping_address.address_line = shipping_address.address_line || shipping_address.street_address || shipping_address.address || req.body.street_address || req.body.address;
-    shipping_address.city = shipping_address.city || req.body.city;
-    shipping_address.province = shipping_address.province || req.body.province || '';
-    shipping_address.postal_code = shipping_address.postal_code || req.body.postal_code || '';
+  // Agar shipping_address missing ya undefined hai, toh empty object banayein
+  if (!shipping_address || typeof shipping_address !== 'object') {
+    shipping_address = {};
   }
 
-  if (!shipping_address || !shipping_address.full_name || !shipping_address.phone || !shipping_address.address_line || !shipping_address.city) {
+  // Frontend ke kisi bhi payload format se data extract karein
+  const firstName = shipping_address.first_name || req.body.first_name || '';
+  const lastName = shipping_address.last_name || req.body.last_name || '';
+  const fullNameCombined = `${firstName} ${lastName}`.trim();
+
+  shipping_address.full_name = 
+    shipping_address.full_name || 
+    (fullNameCombined.length > 0 ? fullNameCombined : null) || 
+    req.body.full_name || 
+    req.user?.name || 
+    'Customer';
+
+  shipping_address.phone = 
+    shipping_address.phone || 
+    req.body.phone || 
+    req.body.phone_number;
+
+  shipping_address.address_line = 
+    shipping_address.address_line || 
+    shipping_address.street_address || 
+    shipping_address.address || 
+    req.body.street_address || 
+    req.body.address;
+
+  shipping_address.city = 
+    shipping_address.city || 
+    req.body.city;
+
+  shipping_address.province = 
+    shipping_address.province || 
+    req.body.province || 
+    '';
+
+  shipping_address.postal_code = 
+    shipping_address.postal_code || 
+    req.body.postal_code || 
+    '';
+
+  // Final Validation Check
+  if (!shipping_address.full_name || !shipping_address.phone || !shipping_address.address_line || !shipping_address.city) {
     return res.status(400).json({ success: false, message: 'Complete shipping address is required.' });
   }
 
@@ -48,7 +73,6 @@ const createOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid payment method.' });
   }
 
-  // Non-COD methods require proof of payment.
   const isManualVerificationMethod = payment_method !== 'cod';
   if (isManualVerificationMethod && !req.file) {
     return res.status(400).json({ success: false, message: 'Please upload a screenshot/receipt of your payment.' });
@@ -70,7 +94,6 @@ const createOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Your cart is empty.' });
   }
 
-  // Validate stock before committing
   for (const item of items) {
     const availableStock = item.variant_id ? item.variant_stock : item.stock_quantity;
     if (item.quantity > availableStock) {
@@ -129,7 +152,6 @@ const createOrder = asyncHandler(async (req, res) => {
         [orderId, item.product_id, item.variant_id, item.product_name, item.sku, item.quantity, item.unit_price, item.subtotal]
       );
 
-      // Decrease stock
       if (item.variant_id) {
         await connection.query('UPDATE product_variants SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.variant_id]);
       } else {
