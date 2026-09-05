@@ -120,4 +120,34 @@ const getMe = asyncHandler(async (req, res) => {
   res.json({ success: true, user: rows[0] });
 });
 
-module.exports = { register, login, logout, getMe };
+// PUT /api/auth/password
+const changePassword = asyncHandler(async (req, res) => {
+  const { current_password, currentPassword, new_password, newPassword } = req.body;
+  const oldPass = current_password || currentPassword;
+  const newPass = new_password || newPassword;
+
+  if (!oldPass || !newPass) {
+    return res.status(400).json({ success: false, message: 'Current password and new password are required.' });
+  }
+  if (newPass.length < 6) {
+    return res.status(400).json({ success: false, message: 'New password must be at least 6 characters.' });
+  }
+
+  const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.user.id]);
+  if (rows.length === 0) {
+    return res.status(404).json({ success: false, message: 'User not found.' });
+  }
+
+  const user = rows[0];
+  const match = await bcrypt.compare(oldPass, user.password_hash);
+  if (!match) {
+    return res.status(400).json({ success: false, message: 'Incorrect current password.' });
+  }
+
+  const newHash = await bcrypt.hash(newPass, SALT_ROUNDS);
+  await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, req.user.id]);
+
+  res.json({ success: true, message: 'Password updated successfully.' });
+});
+
+module.exports = { register, login, logout, getMe, changePassword };
