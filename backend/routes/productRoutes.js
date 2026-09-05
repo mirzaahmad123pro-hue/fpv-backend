@@ -2,11 +2,10 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 
-// Memory storage keeps file buffers in RAM (perfect for Render)
 const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB limit
 });
 
 const {
@@ -23,7 +22,7 @@ router.get('/', getProducts);
 router.get('/slug/:slug', getProductBySlug);
 router.get('/:id', getProductById);
 
-// Admin Routes with Multer File Parser
+// Admin Routes (upload.any() accepts field name "images" or "image")
 router.post('/', upload.any(), createProduct);
 router.put('/:id', upload.any(), updateProduct);
 router.delete('/:id', deleteProduct);
