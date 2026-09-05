@@ -7,30 +7,43 @@ const VALID_PAYMENT_METHODS = ['cod', 'jazzcash', 'easypaisa', 'bank_transfer'];
 const CANCELLABLE_ORDER_STATUSES = ['pending'];
 
 // POST /api/orders
-// Sent as multipart/form-data so a payment receipt screenshot can be
-// attached for non-COD methods (field name: "receipt").
-// Fields: shipping_address (JSON string: {full_name, phone, address_line,
-//         city, province, postal_code}), payment_method: 'cod'|'jazzcash'|
-//         'easypaisa'|'bank_transfer', notes, transaction_id?, receipt? (file)
 const createOrder = asyncHandler(async (req, res) => {
   const { payment_method, notes, transaction_id } = req.body;
 
-  // shipping_address arrives as a JSON string in multipart form-data
-  // (form-data can't carry nested objects), but we also accept it as an
-  // already-parsed object in case a JSON request body is used instead —
-  // this keeps the endpoint backward compatible either way.
   let shipping_address = req.body.shipping_address;
+
+  // JSON string parse karein ya fallback object banayein
   if (typeof shipping_address === 'string') {
     try {
       shipping_address = JSON.parse(shipping_address);
     } catch (e) {
-      return res.status(400).json({ success: false, message: 'Invalid shipping address data.' });
+      // Agar JSON string parsing fail ho jaye toh string ko address line treat karein
+      shipping_address = {
+        address_line: req.body.shipping_address
+      };
     }
+  }
+
+  // Address keys normalization (frontend ke kisi bhi format ko standard shape mein convert karein)
+  if (shipping_address && typeof shipping_address === 'object') {
+    shipping_address.full_name = 
+      shipping_address.full_name || 
+      `${shipping_address.first_name || req.body.first_name || ''} ${shipping_address.last_name || req.body.last_name || ''}`.trim() || 
+      req.body.full_name || 
+      req.user?.name || 
+      'Customer';
+
+    shipping_address.phone = shipping_address.phone || req.body.phone || req.body.phone_number;
+    shipping_address.address_line = shipping_address.address_line || shipping_address.street_address || shipping_address.address || req.body.street_address || req.body.address;
+    shipping_address.city = shipping_address.city || req.body.city;
+    shipping_address.province = shipping_address.province || req.body.province || '';
+    shipping_address.postal_code = shipping_address.postal_code || req.body.postal_code || '';
   }
 
   if (!shipping_address || !shipping_address.full_name || !shipping_address.phone || !shipping_address.address_line || !shipping_address.city) {
     return res.status(400).json({ success: false, message: 'Complete shipping address is required.' });
   }
+
   if (!VALID_PAYMENT_METHODS.includes(payment_method)) {
     return res.status(400).json({ success: false, message: 'Invalid payment method.' });
   }
@@ -95,10 +108,6 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const addressText = `${shipping_address.full_name}, ${shipping_address.phone}\n${shipping_address.address_line}, ${shipping_address.city}${shipping_address.province ? ', ' + shipping_address.province : ''}${shipping_address.postal_code ? ' ' + shipping_address.postal_code : ''}`;
 
-  // COD stays 'pending' (fulfillment-based — nothing to verify up front).
-  // JazzCash/Easypaisa/Bank Transfer go to 'pending_verification' instead
-  // of ever silently auto-completing — an admin must check the uploaded
-  // receipt and mark it Paid/Rejected before the order is treated as paid.
   const paymentStatus = isManualVerificationMethod ? 'pending_verification' : 'pending';
   const receiptPath = req.file ? `/uploads/receipts/${req.file.filename}` : null;
 
@@ -180,9 +189,7 @@ const getOrderById = asyncHandler(async (req, res) => {
   res.json({ success: true, order: { ...order, items, payment: payment[0] || null } });
 });
 
-// PUT /api/orders/:id/cancel  (customer) — body: { reason }
-// Only allowed while the order is still 'pending'. Restores stock for
-// every line item and records the reason the customer gave.
+// PUT /api/orders/:id/cancel
 const cancelOrder = asyncHandler(async (req, res) => {
   const { reason } = req.body;
   if (!reason || !reason.trim()) {
