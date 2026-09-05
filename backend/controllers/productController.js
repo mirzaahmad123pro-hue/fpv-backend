@@ -11,7 +11,7 @@ async function getTableColumns() {
   }
 }
 
-// ImgBB Upload with New API Key
+// Robust ImgBB Direct Upload
 async function uploadToImgBB(fileInput) {
   try {
     const apiKey = process.env.IMGBB_API_KEY || 'a4176249482cdaf9904922b86caaa5c3';
@@ -42,22 +42,26 @@ async function uploadToImgBB(fileInput) {
     const params = new URLSearchParams();
     params.append('image', base64Data);
 
-    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, params.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 20000
-    });
+    const response = await axios.post(
+      `https://api.imgbb.com/1/upload?key=${apiKey}`,
+      params.toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 25000
+      }
+    );
 
     if (response.data && response.data.data && response.data.data.url) {
-      console.log('✅ ImgBB Direct URL Created:', response.data.data.url);
+      console.log('✅ ImgBB Upload Success:', response.data.data.url);
       return response.data.data.url;
     }
   } catch (error) {
-    console.error('❌ ImgBB Upload Failed:', error.response ? JSON.stringify(error.response.data) : error.message);
+    console.error('❌ ImgBB Upload Error:', error.response ? JSON.stringify(error.response.data) : error.message);
   }
   return null;
 }
 
-// Resolve Image Payload
+// Resolve Image URL from File or Body
 async function resolveImageUrl(req) {
   const body = req.body || {};
 
@@ -90,7 +94,7 @@ async function resolveImageUrl(req) {
 
   if (candidate && typeof candidate === 'string') {
     const trimmed = candidate.trim();
-    if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) && !trimmed.includes('localhost') && !trimmed.includes('/uploads/')) {
+    if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) && !trimmed.includes('localhost') && !trimmed.includes('/uploads/') && !trimmed.startsWith('blob:')) {
       return trimmed;
     }
     const uploadedUrl = await uploadToImgBB(trimmed);
