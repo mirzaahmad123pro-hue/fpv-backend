@@ -17,7 +17,7 @@ async function getTableColumns() {
 async function uploadToImgBB(fileInput) {
   try {
     // Uses ENV key or fallback ImgBB public key
-    const apiKey = process.env.IMGBB_API_KEY || '6d000714470b10a1120062e74281329c';
+    const apiKey = process.env.IMGBB_API_KEY || '82458d27aadfb56a92f2228e1d4e8b29';
 
     let base64Image = '';
 
