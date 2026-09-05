@@ -11,66 +11,52 @@ async function getTableColumns() {
   }
 }
 
-// Robust ImgBB Direct Upload
+// Direct Binary Stream to ImgBB API
 async function uploadToImgBB(fileInput) {
   try {
     const apiKey = process.env.IMGBB_API_KEY || 'a4176249482cdaf9904922b86caaa5c3';
-    let base64Data = '';
+    const formData = new FormData();
 
-    if (!fileInput) return null;
-
-    if (typeof fileInput === 'object') {
-      if (fileInput.buffer) {
-        base64Data = fileInput.buffer.toString('base64');
-      } else if (fileInput.path && fs.existsSync(fileInput.path)) {
-        base64Data = fs.readFileSync(fileInput.path, { encoding: 'base64' });
-        try { fs.unlinkSync(fileInput.path); } catch (e) {}
-      }
+    if (typeof fileInput === 'object' && fileInput.buffer) {
+      const blob = new Blob([fileInput.buffer], { type: fileInput.mimetype || 'image/jpeg' });
+      formData.append('image', blob, fileInput.originalname || 'product.jpg');
     } else if (typeof fileInput === 'string') {
       let str = fileInput.trim();
       if (str.startsWith('data:image')) {
-        base64Data = str.split(',')[1];
-      } else if (fs.existsSync(str)) {
-        base64Data = fs.readFileSync(str, { encoding: 'base64' });
-      } else {
-        base64Data = str;
+        str = str.split(',')[1];
       }
+      formData.append('image', str);
+    } else {
+      return null;
     }
 
-    if (!base64Data) return null;
-
-    const params = new URLSearchParams();
-    params.append('image', base64Data);
-
-    const response = await axios.post(
-      `https://api.imgbb.com/1/upload?key=${apiKey}`,
-      params.toString(),
-      {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 25000
-      }
-    );
+    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${apiKey}`, formData, {
+      timeout: 30000
+    });
 
     if (response.data && response.data.data && response.data.data.url) {
       console.log('✅ ImgBB Upload Success:', response.data.data.url);
       return response.data.data.url;
     }
   } catch (error) {
-    console.error('❌ ImgBB Upload Error:', error.response ? JSON.stringify(error.response.data) : error.message);
+    console.error('❌ ImgBB Upload Failed:', error.response ? JSON.stringify(error.response.data) : error.message);
   }
   return null;
 }
 
-// Resolve Image URL from File or Body
+// Extract image from req.files (e.g. 'images' field)
 async function resolveImageUrl(req) {
   const body = req.body || {};
-
   let fileToUpload = req.file;
+
   if (!fileToUpload && req.files) {
-    if (Array.isArray(req.files) && req.files.length > 0) fileToUpload = req.files[0];
-    else if (typeof req.files === 'object') {
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      fileToUpload = req.files[0];
+    } else if (typeof req.files === 'object') {
       const firstKey = Object.keys(req.files)[0];
-      if (firstKey && req.files[firstKey].length > 0) fileToUpload = req.files[firstKey][0];
+      if (firstKey && req.files[firstKey].length > 0) {
+        fileToUpload = req.files[firstKey][0];
+      }
     }
   }
 
@@ -79,18 +65,8 @@ async function resolveImageUrl(req) {
     if (uploadedUrl) return uploadedUrl;
   }
 
-  let candidate = body.image_base64 || body.image_url || body.image || body.thumbnail || null;
-  if (!candidate && body.images) {
-    if (Array.isArray(body.images)) candidate = body.images[0];
-    else if (typeof body.images === 'string') {
-      try {
-        const parsed = JSON.parse(body.images);
-        candidate = Array.isArray(parsed) ? parsed[0] : parsed;
-      } catch (e) {
-        candidate = body.images;
-      }
-    }
-  }
+  let candidate = body.image_base64 || body.image_url || body.image || body.thumbnail || body.images || null;
+  if (Array.isArray(candidate)) candidate = candidate[0];
 
   if (candidate && typeof candidate === 'string') {
     const trimmed = candidate.trim();
@@ -201,10 +177,10 @@ const createProduct = async (req, res) => {
       category_id: body.category_id ? parseInt(body.category_id, 10) : 1,
       sku: body.sku || null,
       brand: body.brand || null,
-      target_gender: body.target_gender || null,
+      target_gender: body.gender_or_target || body.target_gender || null,
       status: body.status || 'active',
-      is_featured: (body.is_featured === 'true' || body.is_featured === true || body.is_featured === 1) ? 1 : 0,
-      is_new_arrival: (body.is_new_arrival === 'true' || body.is_new_arrival === true || body.is_new_arrival === 1) ? 1 : 0,
+      is_featured: (body.featured == 1 || body.is_featured == 1) ? 1 : 0,
+      is_new_arrival: (body.new_arrival == 1 || body.is_new_arrival == 1) ? 1 : 0,
       image_url: imageUrl,
       image: imageUrl,
       images: JSON.stringify(imageUrl ? [imageUrl] : [])
@@ -253,7 +229,7 @@ const updateProduct = async (req, res) => {
     if (body.category_id) candidateData.category_id = parseInt(body.category_id, 10);
     if (body.sku) candidateData.sku = body.sku;
     if (body.brand) candidateData.brand = body.brand;
-    if (body.target_gender) candidateData.target_gender = body.target_gender;
+    if (body.gender_or_target || body.target_gender) candidateData.target_gender = body.gender_or_target || body.target_gender;
     if (body.status) candidateData.status = body.status;
 
     if (imageUrl) {
