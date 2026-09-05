@@ -1,9 +1,4 @@
 // Secure image upload handling with Multer.
-// - Only allows image mime types (jpg, png, webp)
-// - Limits file size (default 5MB, configurable via .env)
-// - Generates a random, collision-safe filename (never trusts the
-//   original filename from the client)
-
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
@@ -46,5 +41,6 @@ function makeUploader(subfolder) {
 
 module.exports = {
   uploadProductImages: makeUploader('products'),
-  uploadCategoryImage: makeUploader('categories')
+  uploadCategoryImage: makeUploader('categories'),
+  uploadReceipt: makeUploader('receipts')
 };
