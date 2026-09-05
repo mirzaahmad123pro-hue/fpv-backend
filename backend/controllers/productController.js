@@ -111,14 +111,29 @@ const createProduct = async (req, res) => {
   try {
     const body = req.body || {};
     let imageUrl = body.image_url || body.image || null;
+    let imagesList = [];
 
-    if (body.image_base64) {
+    // 1. Check for Multer file uploads (req.files)
+    if (req.files && req.files.length > 0) {
+      imagesList = req.files.map(file => `/uploads/products/${file.filename}`);
+      imageUrl = imagesList[0];
+    }
+
+    // 2. Fallback to base64 upload if provided
+    if (!imageUrl && body.image_base64) {
       try {
         const uploaded = await uploadToImgBB(body.image_base64);
-        if (uploaded) imageUrl = uploaded;
+        if (uploaded) {
+          imageUrl = uploaded;
+          imagesList.push(uploaded);
+        }
       } catch (imgErr) {
         console.error('Image upload failed:', imgErr);
       }
+    }
+
+    if (imageUrl && imagesList.length === 0) {
+      imagesList.push(imageUrl);
     }
 
     const productName = body.name || body.title || 'Untitled Product';
@@ -131,20 +146,21 @@ const createProduct = async (req, res) => {
       short_description: body.short_description || body.description || '',
       full_description: body.full_description || body.description || '',
       description: body.description || body.short_description || '',
-      regular_price: body.regular_price || body.price || 0,
-      price: body.price || body.regular_price || 0,
-      sale_price: body.sale_price || null,
-      stock_quantity: body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0),
-      stock: body.stock !== undefined ? body.stock : (body.stock_quantity || 0),
-      category_id: body.category_id || 1,
+      regular_price: parseFloat(body.regular_price || body.price || 0),
+      price: parseFloat(body.price || body.regular_price || 0),
+      sale_price: body.sale_price ? parseFloat(body.sale_price) : null,
+      stock_quantity: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
+      stock: parseInt(body.stock !== undefined ? body.stock : (body.stock_quantity || 0), 10),
+      category_id: body.category_id ? parseInt(body.category_id, 10) : 1,
       sku: body.sku || null,
       brand: body.brand || null,
       target_gender: body.target_gender || null,
       status: body.status || 'active',
-      is_featured: body.is_featured ? 1 : 0,
-      is_new_arrival: body.is_new_arrival ? 1 : 0,
+      is_featured: (body.is_featured === 'true' || body.is_featured === true || body.is_featured === '1' || body.is_featured === 1) ? 1 : 0,
+      is_new_arrival: (body.is_new_arrival === 'true' || body.is_new_arrival === true || body.is_new_arrival === '1' || body.is_new_arrival === 1) ? 1 : 0,
       image_url: imageUrl,
-      image: imageUrl
+      image: imageUrl,
+      images: JSON.stringify(imagesList)
     };
 
     const existingCols = await getTableColumns();
@@ -187,11 +203,20 @@ const updateProduct = async (req, res) => {
     const productId = req.params.id;
     const body = req.body || {};
     let imageUrl = body.image_url || body.image || null;
+    let imagesList = [];
 
-    if (body.image_base64) {
+    if (req.files && req.files.length > 0) {
+      imagesList = req.files.map(file => `/uploads/products/${file.filename}`);
+      imageUrl = imagesList[0];
+    }
+
+    if (!imageUrl && body.image_base64) {
       try {
         const uploaded = await uploadToImgBB(body.image_base64);
-        if (uploaded) imageUrl = uploaded;
+        if (uploaded) {
+          imageUrl = uploaded;
+          imagesList.push(uploaded);
+        }
       } catch (imgErr) {
         console.error('Image upload failed:', imgErr);
       }
@@ -207,23 +232,24 @@ const updateProduct = async (req, res) => {
       short_description: body.short_description || body.description || '',
       full_description: body.full_description || body.description || '',
       description: body.description || body.short_description || '',
-      regular_price: body.regular_price || body.price || 0,
-      price: body.price || body.regular_price || 0,
-      sale_price: body.sale_price || null,
-      stock_quantity: body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0),
-      stock: body.stock !== undefined ? body.stock : (body.stock_quantity || 0),
-      category_id: body.category_id || 1,
+      regular_price: parseFloat(body.regular_price || body.price || 0),
+      price: parseFloat(body.price || body.regular_price || 0),
+      sale_price: body.sale_price ? parseFloat(body.sale_price) : null,
+      stock_quantity: parseInt(body.stock_quantity !== undefined ? body.stock_quantity : (body.stock || 0), 10),
+      stock: parseInt(body.stock !== undefined ? body.stock : (body.stock_quantity || 0), 10),
+      category_id: body.category_id ? parseInt(body.category_id, 10) : 1,
       sku: body.sku || null,
       brand: body.brand || null,
       target_gender: body.target_gender || null,
       status: body.status || 'active',
-      is_featured: body.is_featured ? 1 : 0,
-      is_new_arrival: body.is_new_arrival ? 1 : 0
+      is_featured: (body.is_featured === 'true' || body.is_featured === true || body.is_featured === '1' || body.is_featured === 1) ? 1 : 0,
+      is_new_arrival: (body.is_new_arrival === 'true' || body.is_new_arrival === true || body.is_new_arrival === '1' || body.is_new_arrival === 1) ? 1 : 0
     };
 
     if (imageUrl) {
       candidateData.image_url = imageUrl;
       candidateData.image = imageUrl;
+      candidateData.images = JSON.stringify(imagesList.length > 0 ? imagesList : [imageUrl]);
     }
 
     const existingCols = await getTableColumns();
