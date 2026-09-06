@@ -1,5 +1,12 @@
 const db = require('../config/database');
-const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
+
+// Cloudinary Configuration
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 async function getTableColumns() {
   try {
@@ -10,48 +17,28 @@ async function getTableColumns() {
   }
 }
 
-// ImgBB Upload with URLSearchParams and Browser User-Agent Bypass
-async function uploadToImgBB(fileObj) {
-  try {
-    const apiKey = process.env.IMGBB_API_KEY || 'a4176249482cdaf9904922b86caaa5c3';
-    let base64String = '';
-
-    if (fileObj && fileObj.buffer) {
-      base64String = fileObj.buffer.toString('base64');
-    } else if (typeof fileObj === 'string') {
-      base64String = fileObj.includes('base64,') ? fileObj.split('base64,')[1] : fileObj;
+// Cloudinary Stream Upload (No IP Ban Issues)
+async function uploadToCloudinary(fileObj) {
+  return new Promise((resolve) => {
+    if (!fileObj || !fileObj.buffer) {
+      console.log('⚠️ [Cloudinary] No valid file buffer found');
+      return resolve(null);
     }
 
-    if (!base64String) {
-      console.log('⚠️ [ImgBB] No valid Base64 image found');
-      return null;
-    }
-
-    const params = new URLSearchParams();
-    params.append('image', base64String);
-
-    // Browser User-Agent Header Added to Bypass Cloudflare/ImgBB Bot Blocks
-    const response = await axios.post(
-      `https://api.imgbb.com/1/upload?key=${apiKey}`,
-      params.toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'application/json'
-        },
-        timeout: 25000
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder: 'falcon_peak_products' },
+      (error, result) => {
+        if (error) {
+          console.error('❌ [Cloudinary Error]:', error.message || error);
+          return resolve(null);
+        }
+        console.log('✅ [Cloudinary Success] Image URL:', result.secure_url);
+        return resolve(result.secure_url);
       }
     );
 
-    if (response.data && response.data.data && response.data.data.url) {
-      console.log('✅ [ImgBB Success] Image URL:', response.data.data.url);
-      return response.data.data.url;
-    }
-  } catch (error) {
-    console.error('❌ [ImgBB API Error]:', error.response ? JSON.stringify(error.response.data) : error.message);
-  }
-  return null;
+    uploadStream.end(fileObj.buffer);
+  });
 }
 
 async function resolveImageUrl(req) {
@@ -59,14 +46,12 @@ async function resolveImageUrl(req) {
 
   if (req.files && Array.isArray(req.files) && req.files.length > 0) {
     fileToUpload = req.files[0];
-    console.log('📦 [File Received]:', fileToUpload.originalname, 'Size:', fileToUpload.size);
   } else if (req.file) {
     fileToUpload = req.file;
-    console.log('📦 [File Received Single]:', fileToUpload.originalname);
   }
 
   if (fileToUpload) {
-    const uploadedUrl = await uploadToImgBB(fileToUpload);
+    const uploadedUrl = await uploadToCloudinary(fileToUpload);
     if (uploadedUrl) return uploadedUrl;
   }
 
@@ -79,7 +64,6 @@ async function resolveImageUrl(req) {
     if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) && !trimmed.includes('localhost') && !trimmed.includes('blob:')) {
       return trimmed;
     }
-    return await uploadToImgBB(trimmed);
   }
 
   return null;
