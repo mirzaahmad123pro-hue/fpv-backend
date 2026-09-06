@@ -13,11 +13,12 @@ async function getTableColumns() {
     const [cols] = await db.query('SHOW COLUMNS FROM products');
     return cols.map(c => c.Field);
   } catch (error) {
+    console.error('❌ [DB Error] SHOW COLUMNS failed:', error.message);
     return [];
   }
 }
 
-// Cloudinary Stream Upload (No IP Ban Issues)
+// Cloudinary Stream Upload
 async function uploadToCloudinary(fileObj) {
   return new Promise((resolve) => {
     if (!fileObj || !fileObj.buffer) {
@@ -72,7 +73,7 @@ async function resolveImageUrl(req) {
 function formatProductImage(product) {
   if (!product) return product;
 
-  let img = product.image_url || product.image || product.thumbnail || null;
+  let img = product.image_url || product.image || product.thumbnail || product.img || null;
   if (!img && product.images) {
     if (Array.isArray(product.images)) img = product.images[0];
     else if (typeof product.images === 'string') {
@@ -86,7 +87,7 @@ function formatProductImage(product) {
   const defaultPlaceholder = 'https://placehold.co/300x300/1e293b/e2e8f0?text=No+Image';
   let finalImage = defaultPlaceholder;
 
-  if (img && typeof img === 'string' && img.trim() !== '') {
+  if (img && typeof img === 'string' && img.trim() !== '' && img.trim() !== 'null' && img.trim() !== 'undefined') {
     const trimmed = img.trim();
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       finalImage = trimmed;
@@ -147,6 +148,7 @@ const createProduct = async (req, res) => {
   try {
     const body = req.body || {};
     const imageUrl = await resolveImageUrl(req);
+    console.log('📸 [createProduct] Saved Image URL:', imageUrl);
 
     const productName = body.name || body.title || 'Untitled Product';
     const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
@@ -176,6 +178,8 @@ const createProduct = async (req, res) => {
     };
 
     const existingCols = await getTableColumns();
+    console.log('📋 [DB Columns in products table]:', existingCols);
+
     const insertKeys = [];
     const insertValues = [];
 
@@ -195,6 +199,7 @@ const createProduct = async (req, res) => {
 
     res.status(201).json({ success: true, id: result.insertId, message: 'Product created successfully', image_url: imageUrl });
   } catch (error) {
+    console.error('❌ [createProduct Error]:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 };
