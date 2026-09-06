@@ -1,7 +1,6 @@
 const db = require('../config/database');
 const cloudinary = require('cloudinary').v2;
 
-// Cloudinary Configuration
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -11,20 +10,16 @@ cloudinary.config({
 async function getTableColumns() {
   try {
     const [cols] = await db.query('SHOW COLUMNS FROM products');
-    return cols.map(c => c.Field);
+    return cols.map(c => c.Field || c.field || Object.values(c)[0]);
   } catch (error) {
     console.error('❌ [DB Error] SHOW COLUMNS failed:', error.message);
     return [];
   }
 }
 
-// Cloudinary Stream Upload
 async function uploadToCloudinary(fileObj) {
   return new Promise((resolve) => {
-    if (!fileObj || !fileObj.buffer) {
-      console.log('⚠️ [Cloudinary] No valid file buffer found');
-      return resolve(null);
-    }
+    if (!fileObj || !fileObj.buffer) return resolve(null);
 
     const uploadStream = cloudinary.uploader.upload_stream(
       { folder: 'falcon_peak_products' },
@@ -33,7 +28,6 @@ async function uploadToCloudinary(fileObj) {
           console.error('❌ [Cloudinary Error]:', error.message || error);
           return resolve(null);
         }
-        console.log('✅ [Cloudinary Success] Image URL:', result.secure_url);
         return resolve(result.secure_url);
       }
     );
@@ -148,7 +142,6 @@ const createProduct = async (req, res) => {
   try {
     const body = req.body || {};
     const imageUrl = await resolveImageUrl(req);
-    console.log('📸 [createProduct] Saved Image URL:', imageUrl);
 
     const productName = body.name || body.title || 'Untitled Product';
     const computedSlug = body.slug || String(productName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
@@ -178,8 +171,6 @@ const createProduct = async (req, res) => {
     };
 
     const existingCols = await getTableColumns();
-    console.log('📋 [DB Columns in products table]:', existingCols);
-
     const insertKeys = [];
     const insertValues = [];
 
@@ -199,7 +190,6 @@ const createProduct = async (req, res) => {
 
     res.status(201).json({ success: true, id: result.insertId, message: 'Product created successfully', image_url: imageUrl });
   } catch (error) {
-    console.error('❌ [createProduct Error]:', error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 };
