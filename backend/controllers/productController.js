@@ -7,12 +7,30 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Auto-add missing image columns to MySQL Table automatically
+async function autoFixDatabaseColumns() {
+  try {
+    const [cols] = await db.query('SHOW COLUMNS FROM products');
+    const colNames = cols.map(c => String(c.Field || c.field || Object.values(c)[0]).toLowerCase());
+
+    if (!colNames.includes('image_url')) {
+      await db.query('ALTER TABLE products ADD COLUMN image_url TEXT NULL');
+      console.log('✅ Auto-created image_url column in MySQL');
+    }
+    if (!colNames.includes('images')) {
+      await db.query('ALTER TABLE products ADD COLUMN images JSON NULL');
+      console.log('✅ Auto-created images column in MySQL');
+    }
+  } catch (err) {
+    console.error('⚠️ Auto-fix column check error:', err.message);
+  }
+}
+
 async function getTableColumns() {
   try {
     const [cols] = await db.query('SHOW COLUMNS FROM products');
     return cols.map(c => c.Field || c.field || Object.values(c)[0]);
   } catch (error) {
-    console.error('❌ [DB Error] SHOW COLUMNS failed:', error.message);
     return [];
   }
 }
@@ -67,25 +85,32 @@ async function resolveImageUrl(req) {
 function formatProductImage(product) {
   if (!product) return product;
 
-  let img = product.image_url || product.image || product.thumbnail || product.img || null;
-  if (!img && product.images) {
-    if (Array.isArray(product.images)) img = product.images[0];
-    else if (typeof product.images === 'string') {
-      try {
-        const parsed = JSON.parse(product.images);
-        img = Array.isArray(parsed) ? parsed[0] : parsed;
-      } catch (e) { img = product.images; }
+  let finalImage = null;
+
+  for (const [key, val] of Object.entries(product)) {
+    if (typeof val === 'string' && val.trim() !== '') {
+      const trimmed = val.trim();
+      if ((trimmed.startsWith('http://') || trimmed.startsWith('https://')) && !trimmed.includes('placehold.co')) {
+        finalImage = trimmed;
+        break;
+      }
     }
   }
 
-  const defaultPlaceholder = 'https://placehold.co/300x300/1e293b/e2e8f0?text=No+Image';
-  let finalImage = defaultPlaceholder;
-
-  if (img && typeof img === 'string' && img.trim() !== '' && img.trim() !== 'null' && img.trim() !== 'undefined') {
-    const trimmed = img.trim();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      finalImage = trimmed;
+  if (!finalImage && product.images) {
+    let imgs = product.images;
+    if (typeof imgs === 'string') {
+      try { imgs = JSON.parse(imgs); } catch (e) { imgs = [imgs]; }
     }
+    if (Array.isArray(imgs) && imgs.length > 0 && typeof imgs[0] === 'string') {
+      if (imgs[0].startsWith('http://') || imgs[0].startsWith('https://')) {
+        finalImage = imgs[0];
+      }
+    }
+  }
+
+  if (!finalImage) {
+    finalImage = 'https://placehold.co/300x300/1e293b/e2e8f0?text=No+Image';
   }
 
   return {
@@ -93,12 +118,14 @@ function formatProductImage(product) {
     image_url: finalImage,
     image: finalImage,
     thumbnail: finalImage,
+    img: finalImage,
     images: [finalImage]
   };
 }
 
 const getProducts = async (req, res) => {
   try {
+    await autoFixDatabaseColumns();
     const existingCols = await getTableColumns();
     let query = 'SELECT * FROM products';
     if (existingCols.includes('id')) query += ' ORDER BY id DESC';
@@ -140,6 +167,7 @@ const getProductBySlug = async (req, res) => {
 
 const createProduct = async (req, res) => {
   try {
+    await autoFixDatabaseColumns();
     const body = req.body || {};
     const imageUrl = await resolveImageUrl(req);
 
@@ -166,7 +194,6 @@ const createProduct = async (req, res) => {
       is_featured: (body.featured == 1 || body.is_featured == 1) ? 1 : 0,
       is_new_arrival: (body.new_arrival == 1 || body.is_new_arrival == 1) ? 1 : 0,
       image_url: imageUrl,
-      image: imageUrl,
       images: JSON.stringify(imageUrl ? [imageUrl] : [])
     };
 
@@ -196,6 +223,7 @@ const createProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
   try {
+    await autoFixDatabaseColumns();
     const productId = req.params.id;
     const body = req.body || {};
     const imageUrl = await resolveImageUrl(req);
@@ -218,7 +246,6 @@ const updateProduct = async (req, res) => {
 
     if (imageUrl) {
       candidateData.image_url = imageUrl;
-      candidateData.image = imageUrl;
       candidateData.images = JSON.stringify([imageUrl]);
     }
 
