@@ -1,17 +1,15 @@
 const multer = require('multer');
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-
 function fileFilter(req, file, cb) {
-  if (ALLOWED_TYPES.includes(file.mimetype)) {
+  if (file.mimetype && file.mimetype.startsWith('image/')) {
     cb(null, true);
   } else {
-    cb(new Error('Only JPG, PNG, and WEBP image files are allowed.'));
+    cb(new Error('Only image files are allowed!'));
   }
 }
 
 function makeUploader() {
-  const maxSizeMb = parseInt(process.env.MAX_UPLOAD_SIZE_MB, 10) || 5;
+  const maxSizeMb = parseInt(process.env.MAX_UPLOAD_SIZE_MB, 10) || 10;
   return multer({
     storage: multer.memoryStorage(),
     fileFilter,
