@@ -21,7 +21,7 @@
     "mysql2": "^3.11.0",
     "axios": "^1.6.0",
     "form-data": "^4.0.0",
-    "cloudinary": "^2.0.0",
+    "cloudinary": "^1.41.0",
     "multer-storage-cloudinary": "^4.0.0"
   },
   "devDependencies": {
