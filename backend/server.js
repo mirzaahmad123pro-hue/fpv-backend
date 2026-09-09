@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const cloudinary = require('cloudinary').v2;
 
 const { testConnection } = require('./config/database');
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
@@ -18,6 +19,13 @@ const adminRoutes = require('./routes/adminRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
+
+// ── Cloudinary Configuration ─────────────────────────
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 // ── Render Proxy Fix ────────────────────────────────
 app.set('trust proxy', 1);
@@ -56,8 +64,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
-// ── Static file serving for uploaded images ─────────
-app.use('/uploads', express.static(path.join(__dirname, process.env.UPLOAD_PATH || 'uploads')));
+// ── Static file serving for uploaded images (Local Fallback) ──
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Health check ─────────────────────────────────────
 app.get('/api/health', (req, res) => {
