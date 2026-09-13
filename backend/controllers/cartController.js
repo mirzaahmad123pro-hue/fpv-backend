@@ -17,7 +17,6 @@ const getCart = asyncHandler(async (req, res) => {
     `SELECT ci.id, ci.quantity, ci.variant_id,
             p.id AS product_id, p.name, p.slug, p.regular_price, p.sale_price, p.stock_quantity, p.images,
             COALESCE(
-              p.thumbnail,
               (SELECT image_path FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC LIMIT 1),
               JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]'))
             ) AS thumbnail,
