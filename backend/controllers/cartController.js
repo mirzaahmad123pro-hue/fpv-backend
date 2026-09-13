@@ -15,8 +15,12 @@ const getCart = asyncHandler(async (req, res) => {
 
   const [items] = await pool.query(
     `SELECT ci.id, ci.quantity, ci.variant_id,
-            p.id AS product_id, p.name, p.slug, p.regular_price, p.sale_price, p.stock_quantity,
-            (SELECT image_path FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC LIMIT 1) AS thumbnail,
+            p.id AS product_id, p.name, p.slug, p.regular_price, p.sale_price, p.stock_quantity, p.images,
+            COALESCE(
+              p.thumbnail,
+              (SELECT image_path FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC LIMIT 1),
+              JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]'))
+            ) AS thumbnail,
             v.size, v.color, v.price_adjustment, v.stock_quantity AS variant_stock
      FROM cart_items ci
      JOIN products p ON p.id = ci.product_id
@@ -27,11 +31,29 @@ const getCart = asyncHandler(async (req, res) => {
 
   let subtotal = 0;
   const formatted = items.map(item => {
+    let img = item.thumbnail;
+
+    // Fallback if images column contains JSON string or array
+    if ((!img || img === 'null') && item.images) {
+      try {
+        const parsed = typeof item.images === 'string' ? JSON.parse(item.images) : item.images;
+        if (Array.isArray(parsed) && parsed.length > 0) img = parsed[0];
+      } catch (e) {
+        if (typeof item.images === 'string') img = item.images;
+      }
+    }
+
     const basePrice = item.sale_price ? Number(item.sale_price) : Number(item.regular_price);
     const unitPrice = basePrice + Number(item.price_adjustment || 0);
     const lineTotal = unitPrice * item.quantity;
     subtotal += lineTotal;
-    return { ...item, unit_price: unitPrice, line_total: lineTotal };
+
+    return { 
+      ...item, 
+      thumbnail: img || null,
+      unit_price: unitPrice, 
+      line_total: lineTotal 
+    };
   });
 
   res.json({ success: true, items: formatted, subtotal });
