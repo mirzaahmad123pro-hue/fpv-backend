@@ -28,7 +28,8 @@ const createCategory = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Category name is required.' });
   }
   const slug = slugify(name);
-  const image = req.file ? `/uploads/categories/${req.file.filename}` : null;
+  // FIX: Direct req.file.path use karein (Cloudinary URL)
+  const image = req.file ? req.file.path : null;
 
   const [existing] = await pool.query('SELECT id FROM categories WHERE slug = ?', [slug]);
   if (existing.length > 0) {
@@ -54,7 +55,8 @@ const updateCategory = asyncHandler(async (req, res) => {
   }
 
   const slug = name ? slugify(name) : rows[0].slug;
-  const image = req.file ? `/uploads/categories/${req.file.filename}` : rows[0].image;
+  // FIX: Direct req.file.path use karein (Cloudinary URL)
+  const image = req.file ? req.file.path : rows[0].image;
 
   await pool.query(
     'UPDATE categories SET name = ?, slug = ?, description = ?, image = ?, status = ? WHERE id = ?',
