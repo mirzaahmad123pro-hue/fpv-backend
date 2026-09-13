@@ -132,7 +132,11 @@ const createOrder = asyncHandler(async (req, res) => {
   const addressText = `${shipping_address.full_name}, ${shipping_address.phone}\n${shipping_address.address_line}, ${shipping_address.city}${shipping_address.province ? ', ' + shipping_address.province : ''}${shipping_address.postal_code ? ' ' + shipping_address.postal_code : ''}`;
 
   const paymentStatus = isManualVerificationMethod ? 'pending_verification' : 'pending';
-  const receiptPath = req.file ? `/uploads/receipts/${req.file.filename}` : null;
+
+  // FIX: Cloudinary URL ko direct use kar rahe hain
+  const receiptPath = req.file 
+    ? (req.file.path || req.file.secure_url || req.file.url || `/uploads/receipts/${req.file.filename}`) 
+    : null;
 
   const connection = await pool.getConnection();
   try {
