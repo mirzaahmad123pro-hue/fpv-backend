@@ -13,6 +13,10 @@ async function autoFixDatabaseColumns() {
     const [cols] = await db.query('SHOW COLUMNS FROM products');
     const colNames = cols.map(c => String(c.Field || c.field || Object.values(c)[0]).toLowerCase());
 
+    if (!colNames.includes('image')) {
+      await db.query('ALTER TABLE products ADD COLUMN image TEXT NULL');
+      console.log('✅ Auto-created image column in MySQL');
+    }
     if (!colNames.includes('image_url')) {
       await db.query('ALTER TABLE products ADD COLUMN image_url TEXT NULL');
       console.log('✅ Auto-created image_url column in MySQL');
@@ -35,22 +39,33 @@ async function getTableColumns() {
   }
 }
 
+// Fixed: Supports both memoryStorage (buffer) & diskStorage (path)
 async function uploadToCloudinary(fileObj) {
   return new Promise((resolve) => {
-    if (!fileObj || !fileObj.buffer) return resolve(null);
+    if (!fileObj) return resolve(null);
 
-    const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: 'falcon_peak_products' },
-      (error, result) => {
+    const options = { folder: 'falcon_peak_products' };
+
+    if (fileObj.buffer) {
+      const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
         if (error) {
           console.error('❌ [Cloudinary Error]:', error.message || error);
           return resolve(null);
         }
         return resolve(result.secure_url);
-      }
-    );
-
-    uploadStream.end(fileObj.buffer);
+      });
+      uploadStream.end(fileObj.buffer);
+    } else if (fileObj.path) {
+      cloudinary.uploader.upload(fileObj.path, options, (error, result) => {
+        if (error) {
+          console.error('❌ [Cloudinary Error]:', error.message || error);
+          return resolve(null);
+        }
+        return resolve(result.secure_url);
+      });
+    } else {
+      return resolve(null);
+    }
   });
 }
 
@@ -87,6 +102,7 @@ function formatProductImage(product) {
 
   let finalImage = null;
 
+  // Prioritize Cloudinary / valid external image URLs
   for (const [key, val] of Object.entries(product)) {
     if (typeof val === 'string' && val.trim() !== '') {
       const trimmed = val.trim();
@@ -193,7 +209,11 @@ const createProduct = async (req, res) => {
       status: body.status || 'active',
       is_featured: (body.featured == 1 || body.is_featured == 1) ? 1 : 0,
       is_new_arrival: (body.new_arrival == 1 || body.is_new_arrival == 1) ? 1 : 0,
+      // Fixed: Populating all image fields
+      image: imageUrl,
       image_url: imageUrl,
+      thumbnail: imageUrl,
+      img: imageUrl,
       images: JSON.stringify(imageUrl ? [imageUrl] : [])
     };
 
@@ -244,8 +264,12 @@ const updateProduct = async (req, res) => {
     if (body.gender_or_target || body.target_gender) candidateData.target_gender = body.gender_or_target || body.target_gender;
     if (body.status) candidateData.status = body.status;
 
+    // Fixed: Map new Cloudinary URL to all possible image columns in DB
     if (imageUrl) {
+      candidateData.image = imageUrl;
       candidateData.image_url = imageUrl;
+      candidateData.thumbnail = imageUrl;
+      candidateData.img = imageUrl;
       candidateData.images = JSON.stringify([imageUrl]);
     }
 
