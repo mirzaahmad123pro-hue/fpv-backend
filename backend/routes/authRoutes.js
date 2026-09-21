@@ -4,6 +4,15 @@ const { register, login, googleLogin, logout, getMe, changePassword } = require(
 const { authenticate } = require('../middleware/authMiddleware');
 
 // Public routes
+router.get('/google-config', (req, res) => {
+    res.json({
+        success: true,
+        enabled: true,
+        google_login_enabled: true,
+        clientId: process.env.GOOGLE_CLIENT_ID
+    });
+});
+
 router.post('/register', register);
 router.post('/login', login);
 router.post('/google', googleLogin);
