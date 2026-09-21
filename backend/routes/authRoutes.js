@@ -9,7 +9,10 @@ router.get('/google-config', (req, res) => {
         success: true,
         enabled: true,
         google_login_enabled: true,
-        clientId: process.env.GOOGLE_CLIENT_ID
+        googleLoginEnabled: true,
+        clientId: process.env.GOOGLE_CLIENT_ID,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        googleClientId: process.env.GOOGLE_CLIENT_ID
     });
 });
 
