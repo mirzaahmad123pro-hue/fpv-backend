@@ -74,15 +74,17 @@ app.get('/api/health', (req, res) => {
 
 // ── Announcement Fallback Route ──────────────────────
 app.get('/api/announcements/active', (req, res) => {
-  res.json({ success: true, announcements: [] });
+  res.json({ success: true, announcements: [], data: [] });
 });
 
-// ── Support Routes ───────────────────────────────────
+// ── User Support Fallback Routes ─────────────────────
 app.get('/api/support', (req, res) => {
   res.json({ 
     success: true, 
+    data: [], 
     conversations: [], 
-    messages: [] 
+    messages: [],
+    tickets: []
   });
 });
 
@@ -90,6 +92,24 @@ app.post('/api/support', (req, res) => {
   res.json({ 
     success: true, 
     message: 'Your message has been sent successfully.' 
+  });
+});
+
+// ── Admin Support Fallback Routes ────────────────────
+app.get(['/api/admin/support', '/api/admin/support/*'], (req, res) => {
+  res.json({ 
+    success: true, 
+    data: [], 
+    conversations: [], 
+    messages: [],
+    tickets: []
+  });
+});
+
+app.post('/api/admin/support/*', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Operation successful' 
   });
 });
 
