@@ -20,6 +20,9 @@ const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
+// ── In-Memory Support Store (Temporary persistence) ──
+const supportStore = [];
+
 // ── Cloudinary Configuration ─────────────────────────
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -77,39 +80,67 @@ app.get('/api/announcements/active', (req, res) => {
   res.json({ success: true, announcements: [], data: [] });
 });
 
-// ── User Support Fallback Routes ─────────────────────
+// ── Dynamic Support & Help Routes ─────────────────────
+// 1. GET User Support Conversations
 app.get('/api/support', (req, res) => {
   res.json({ 
     success: true, 
-    data: [], 
-    conversations: [], 
-    messages: [],
-    tickets: []
+    data: supportStore, 
+    conversations: supportStore, 
+    messages: supportStore,
+    tickets: supportStore
   });
 });
 
+// 2. POST User Send Message
 app.post('/api/support', (req, res) => {
+  const { message, text, subject, name, email } = req.body || {};
+  const content = message || text || 'Support query';
+  
+  const newTicket = {
+    id: 'MSG-' + Date.now(),
+    conversation_id: 'CONV-' + Date.now(),
+    subject: subject || 'Help & Support Request',
+    message: content,
+    user_name: name || 'Customer',
+    user_email: email || 'customer@falconpeakventure.com',
+    status: 'Open',
+    createdAt: new Date().toISOString(),
+    messages: [
+      {
+        id: Date.now(),
+        sender: 'user',
+        text: content,
+        timestamp: new Date().toISOString()
+      }
+    ]
+  };
+
+  supportStore.unshift(newTicket);
+
   res.json({ 
     success: true, 
-    message: 'Your message has been sent successfully.' 
+    message: 'Your message has been sent successfully.',
+    data: newTicket
   });
 });
 
-// ── Admin Support Fallback Routes ────────────────────
+// 3. GET Admin Support Conversations
 app.get(['/api/admin/support', '/api/admin/support/*'], (req, res) => {
   res.json({ 
     success: true, 
-    data: [], 
-    conversations: [], 
-    messages: [],
-    tickets: []
+    data: supportStore, 
+    conversations: supportStore, 
+    messages: supportStore,
+    tickets: supportStore
   });
 });
 
+// 4. POST Admin Reply / Update
 app.post('/api/admin/support/*', (req, res) => {
   res.json({ 
     success: true, 
-    message: 'Operation successful' 
+    message: 'Reply sent successfully' 
   });
 });
 
