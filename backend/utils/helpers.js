@@ -13,7 +13,7 @@ function slugify(text) {
 function generateOrderNumber() {
   const year = new Date().getFullYear();
   const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-  return `FPV-${year}-${random}`;
+  return `FGE-${year}-${random}`;
 }
 
 function formatPKR(amount) {
