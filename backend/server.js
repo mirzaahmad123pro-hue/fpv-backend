@@ -20,8 +20,54 @@ const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
-// ── In-Memory Support Store (Temporary persistence) ──
+// ── In-Memory Support Store ──────────────────────────
 const supportStore = [];
+
+// Helper function to build bulletproof ticket objects
+function createTicketObject(raw = {}) {
+  const now = new Date().toISOString();
+  const id = raw.id || 'MSG-' + Date.now();
+  const content = raw.message || raw.text || 'Help & Support Request';
+  const name = raw.name || raw.user_name || 'Customer';
+  const email = raw.email || raw.user_email || 'customer@falconpeakventure.com';
+  const subject = raw.subject || 'Help & Support Request';
+
+  const ticketObj = {
+    id: id,
+    _id: id,
+    ticket_id: id,
+    conversation_id: id,
+    subject: subject,
+    title: subject,
+    message: content,
+    text: content,
+    user_name: name,
+    user_email: email,
+    name: name,
+    email: email,
+    status: raw.status || 'open',
+    createdAt: raw.createdAt || now,
+    updatedAt: now,
+    user: { name, email },
+    messages: [
+      {
+        id: 'M-' + Date.now(),
+        sender: 'user',
+        sender_type: 'user',
+        text: content,
+        message: content,
+        timestamp: now,
+        createdAt: now
+      }
+    ]
+  };
+
+  // Safe nested references
+  ticketObj.ticket = ticketObj;
+  ticketObj.conversation = ticketObj;
+
+  return ticketObj;
+}
 
 // ── Cloudinary Configuration ─────────────────────────
 cloudinary.config({
@@ -80,9 +126,8 @@ app.get('/api/announcements/active', (req, res) => {
   res.json({ success: true, announcements: [], data: [] });
 });
 
-// ── Dynamic Support & Help Routes ─────────────────────
-// 1. GET User Support Conversations
-app.get('/api/support', (req, res) => {
+// ── Support Handlers ─────────────────────────────────
+const handleGetSupportList = (req, res) => {
   res.json({ 
     success: true, 
     data: supportStore, 
@@ -90,54 +135,74 @@ app.get('/api/support', (req, res) => {
     messages: supportStore,
     tickets: supportStore
   });
-});
+};
 
-// 2. POST User Send Message
+const handleGetSingleSupport = (req, res) => {
+  const { id } = req.params;
+  const found = supportStore.find(t => t.id === id || t.conversation_id === id || t._id === id) || supportStore[0];
+
+  if (found) {
+    res.json({
+      success: true,
+      data: found,
+      conversation: found,
+      ticket: found,
+      messages: found.messages || [],
+      subject: found.subject
+    });
+  } else {
+    const dummy = createTicketObject({ subject: 'Help & Support Request' });
+    res.json({
+      success: true,
+      data: dummy,
+      conversation: dummy,
+      ticket: dummy,
+      messages: dummy.messages,
+      subject: dummy.subject
+    });
+  }
+};
+
+// User Endpoints
+app.get('/api/support', handleGetSupportList);
+app.get('/api/support/:id', handleGetSingleSupport);
+
 app.post('/api/support', (req, res) => {
-  const { message, text, subject, name, email } = req.body || {};
-  const content = message || text || 'Support query';
-  
-  const newTicket = {
-    id: 'MSG-' + Date.now(),
-    conversation_id: 'CONV-' + Date.now(),
-    subject: subject || 'Help & Support Request',
-    message: content,
-    user_name: name || 'Customer',
-    user_email: email || 'customer@falconpeakventure.com',
-    status: 'Open',
-    createdAt: new Date().toISOString(),
-    messages: [
-      {
-        id: Date.now(),
-        sender: 'user',
-        text: content,
-        timestamp: new Date().toISOString()
-      }
-    ]
-  };
-
+  const newTicket = createTicketObject(req.body || {});
   supportStore.unshift(newTicket);
 
   res.json({ 
     success: true, 
     message: 'Your message has been sent successfully.',
-    data: newTicket
+    data: newTicket,
+    conversation: newTicket,
+    ticket: newTicket
   });
 });
 
-// 3. GET Admin Support Conversations
-app.get(['/api/admin/support', '/api/admin/support/*'], (req, res) => {
-  res.json({ 
-    success: true, 
-    data: supportStore, 
-    conversations: supportStore, 
-    messages: supportStore,
-    tickets: supportStore
-  });
-});
+// Admin Endpoints
+app.get('/api/admin/support', handleGetSupportList);
+app.get('/api/admin/support/:id', handleGetSingleSupport);
 
-// 4. POST Admin Reply / Update
 app.post('/api/admin/support/*', (req, res) => {
+  const { message, text, reply } = req.body || {};
+  const replyContent = message || text || reply || 'Admin response sent';
+
+  if (supportStore.length > 0) {
+    const ticket = supportStore[0];
+    const now = new Date().toISOString();
+    ticket.messages.push({
+      id: 'M-' + Date.now(),
+      sender: 'admin',
+      sender_type: 'admin',
+      text: replyContent,
+      message: replyContent,
+      timestamp: now,
+      createdAt: now
+    });
+    ticket.updatedAt = now;
+  }
+
   res.json({ 
     success: true, 
     message: 'Reply sent successfully' 
