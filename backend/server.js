@@ -72,6 +72,11 @@ app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Falcon Peak Venture API is running.' });
 });
 
+// ── Announcement Fallback Route ──────────────────────
+app.get('/api/announcements/active', (req, res) => {
+  res.json({ success: true, announcements: [] });
+});
+
 // ── API routes ───────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
