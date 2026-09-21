@@ -77,6 +77,22 @@ app.get('/api/announcements/active', (req, res) => {
   res.json({ success: true, announcements: [] });
 });
 
+// ── Support Routes ───────────────────────────────────
+app.get('/api/support', (req, res) => {
+  res.json({ 
+    success: true, 
+    conversations: [], 
+    messages: [] 
+  });
+});
+
+app.post('/api/support', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Your message has been sent successfully.' 
+  });
+});
+
 // ── API routes ───────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
