@@ -20,53 +20,40 @@ const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
-// ── In-Memory Support Store ──────────────────────────
+// ── In-Memory Support Store (No circular loops) ───────
 const supportStore = [];
 
-// Helper function to build bulletproof ticket objects
-function createTicketObject(raw = {}) {
+function createTicket(raw = {}) {
   const now = new Date().toISOString();
   const id = raw.id || 'MSG-' + Date.now();
-  const content = raw.message || raw.text || 'Help & Support Request';
+  const content = raw.message || raw.text || 'Help Request';
   const name = raw.name || raw.user_name || 'Customer';
   const email = raw.email || raw.user_email || 'customer@falconpeakventure.com';
   const subject = raw.subject || 'Help & Support Request';
 
-  const ticketObj = {
-    id: id,
+  return {
+    id,
     _id: id,
-    ticket_id: id,
     conversation_id: id,
-    subject: subject,
+    subject,
     title: subject,
     message: content,
     text: content,
     user_name: name,
     user_email: email,
-    name: name,
-    email: email,
-    status: raw.status || 'open',
-    createdAt: raw.createdAt || now,
+    status: 'open',
+    createdAt: now,
     updatedAt: now,
-    user: { name, email },
     messages: [
       {
         id: 'M-' + Date.now(),
         sender: 'user',
-        sender_type: 'user',
         text: content,
         message: content,
-        timestamp: now,
-        createdAt: now
+        timestamp: now
       }
     ]
   };
-
-  // Safe nested references
-  ticketObj.ticket = ticketObj;
-  ticketObj.conversation = ticketObj;
-
-  return ticketObj;
 }
 
 // ── Cloudinary Configuration ─────────────────────────
@@ -90,7 +77,7 @@ app.use(cors({
   credentials: true
 }));
 
-// Basic rate limiting
+// Rate limiting
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
@@ -108,81 +95,75 @@ const authLimiter = rateLimit({
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
-// ── Body parsing (50MB Limit for Large Image Base64) ─
+// ── Body parsing ────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
-// ── Static file serving for uploaded images (Local Fallback) ──
+// Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ── Health check ─────────────────────────────────────
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'Falcon Peak Venture API is running.' });
 });
 
-// ── Announcement Fallback Route ──────────────────────
 app.get('/api/announcements/active', (req, res) => {
   res.json({ success: true, announcements: [], data: [] });
 });
 
-// ── Support Handlers ─────────────────────────────────
-const handleGetSupportList = (req, res) => {
-  res.json({ 
-    success: true, 
-    data: supportStore, 
-    conversations: supportStore, 
+// ── Support Routes Handlers ──────────────────────────
+const listHandler = (req, res) => {
+  res.json({
+    success: true,
+    data: supportStore,
+    conversations: supportStore,
     messages: supportStore,
     tickets: supportStore
   });
 };
 
-const handleGetSingleSupport = (req, res) => {
+const singleHandler = (req, res) => {
   const { id } = req.params;
-  const found = supportStore.find(t => t.id === id || t.conversation_id === id || t._id === id) || supportStore[0];
+  const ticket = supportStore.find(t => t.id === id || t._id === id) || supportStore[0];
 
-  if (found) {
+  if (ticket) {
     res.json({
       success: true,
-      data: found,
-      conversation: found,
-      ticket: found,
-      messages: found.messages || [],
-      subject: found.subject
+      data: ticket,
+      conversation: ticket,
+      subject: ticket.subject,
+      messages: ticket.messages
     });
   } else {
-    const dummy = createTicketObject({ subject: 'Help & Support Request' });
+    const dummy = createTicket();
     res.json({
       success: true,
       data: dummy,
       conversation: dummy,
-      ticket: dummy,
-      messages: dummy.messages,
-      subject: dummy.subject
+      subject: dummy.subject,
+      messages: dummy.messages
     });
   }
 };
 
-// User Endpoints
-app.get('/api/support', handleGetSupportList);
-app.get('/api/support/:id', handleGetSingleSupport);
+// Endpoints
+app.get('/api/support', listHandler);
+app.get('/api/support/:id', singleHandler);
 
 app.post('/api/support', (req, res) => {
-  const newTicket = createTicketObject(req.body || {});
+  const newTicket = createTicket(req.body || {});
   supportStore.unshift(newTicket);
 
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: 'Your message has been sent successfully.',
-    data: newTicket,
-    conversation: newTicket,
-    ticket: newTicket
+    data: newTicket
   });
 });
 
-// Admin Endpoints
-app.get('/api/admin/support', handleGetSupportList);
-app.get('/api/admin/support/:id', handleGetSingleSupport);
+app.get('/api/admin/support', listHandler);
+app.get('/api/admin/support/:id', singleHandler);
 
 app.post('/api/admin/support/*', (req, res) => {
   const { message, text, reply } = req.body || {};
@@ -194,22 +175,20 @@ app.post('/api/admin/support/*', (req, res) => {
     ticket.messages.push({
       id: 'M-' + Date.now(),
       sender: 'admin',
-      sender_type: 'admin',
       text: replyContent,
       message: replyContent,
-      timestamp: now,
-      createdAt: now
+      timestamp: now
     });
     ticket.updatedAt = now;
   }
 
-  res.json({ 
-    success: true, 
-    message: 'Reply sent successfully' 
+  res.json({
+    success: true,
+    message: 'Reply sent successfully'
   });
 });
 
-// ── API routes ───────────────────────────────────────
+// ── Standard API Routes ──────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -218,7 +197,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// ── 404 + error handling ─────────────────────────────
+// ── Error Handling ───────────────────────────────────
 app.use(notFound);
 app.use(errorHandler);
 
