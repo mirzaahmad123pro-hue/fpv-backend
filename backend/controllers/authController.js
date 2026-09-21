@@ -2,7 +2,9 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
+const { OAuth2Client } = require('google-auth-library');
 
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const SALT_ROUNDS = 12;
 
 function signToken(user) {
@@ -102,6 +104,68 @@ const login = asyncHandler(async (req, res) => {
   });
 });
 
+// POST /api/auth/google
+const googleLogin = asyncHandler(async (req, res) => {
+  const { credential } = req.body;
+  if (!credential) {
+    return res.status(400).json({ success: false, message: 'Google credential token is required.' });
+  }
+
+  // 1. Google Token Verification
+  const ticket = await googleClient.verifyIdToken({
+    idToken: credential,
+    audience: process.env.GOOGLE_CLIENT_ID
+  });
+
+  const payload = ticket.getPayload();
+  const { email, given_name, family_name, name } = payload;
+
+  // 2. Database query check
+  const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+  let user = rows[0];
+
+  if (user) {
+    if (user.status === 'disabled') {
+      return res.status(403).json({ success: false, message: 'This account has been disabled. Contact support.' });
+    }
+  } else {
+    // 3. Naya user MySQL DB mein insert karein
+    const firstName = given_name || name || 'User';
+    const lastName = family_name || '';
+
+    const [result] = await pool.query(
+      `INSERT INTO users (first_name, last_name, email, role)
+       VALUES (?, ?, ?, 'customer')`,
+      [firstName, lastName, email]
+    );
+
+    user = {
+      id: result.insertId,
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      role: 'customer'
+    };
+  }
+
+  // 4. Token & Cookie generation
+  const token = signToken(user);
+  setAuthCookie(res, token);
+
+  res.json({
+    success: true,
+    message: 'Google login successful.',
+    user: {
+      id: user.id,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      email: user.email,
+      role: user.role
+    },
+    token
+  });
+});
+
 // POST /api/auth/logout
 const logout = asyncHandler(async (req, res) => {
   res.clearCookie('token');
@@ -150,4 +214,4 @@ const changePassword = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Password updated successfully.' });
 });
 
-module.exports = { register, login, logout, getMe, changePassword };
+module.exports = { register, login, googleLogin, logout, getMe, changePassword };
