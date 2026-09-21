@@ -20,7 +20,7 @@ const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
-// ── In-Memory Support Store (No circular loops) ───────
+// ── In-Memory Support Store ──────────────────────────
 const supportStore = [];
 
 function createTicket(raw = {}) {
@@ -34,6 +34,7 @@ function createTicket(raw = {}) {
   return {
     id,
     _id: id,
+    ticket_id: id,
     conversation_id: id,
     subject,
     title: subject,
@@ -41,13 +42,17 @@ function createTicket(raw = {}) {
     text: content,
     user_name: name,
     user_email: email,
+    name,
+    email,
     status: 'open',
     createdAt: now,
     updatedAt: now,
+    user: { name, email },
     messages: [
       {
         id: 'M-' + Date.now(),
         sender: 'user',
+        sender_type: 'user',
         text: content,
         message: content,
         timestamp: now
@@ -66,12 +71,12 @@ cloudinary.config({
 // ── Render Proxy Fix ────────────────────────────────
 app.set('trust proxy', 1);
 
-// ── Security middleware ─────────────────────────────
+// Security middleware
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
 
-// ── Cross-Domain CORS Fix ────────────────────────────
+// CORS Fix
 app.use(cors({
   origin: true,
   credentials: true
@@ -95,12 +100,12 @@ const authLimiter = rateLimit({
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
-// ── Body parsing ────────────────────────────────────
+// Body parsing
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
-// Static files
+// Static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Health check
@@ -112,45 +117,53 @@ app.get('/api/announcements/active', (req, res) => {
   res.json({ success: true, announcements: [], data: [] });
 });
 
-// ── Support Routes Handlers ──────────────────────────
-const listHandler = (req, res) => {
-  res.json({
-    success: true,
-    data: supportStore,
-    conversations: supportStore,
-    messages: supportStore,
-    tickets: supportStore
-  });
-};
+// ── Smart Flexible Support Handlers ──────────────────
+// GET List or Single Conversation Support for User & Admin
+const handleSupportGet = (req, res) => {
+  const urlPath = req.path.replace(/\/$/, '');
+  const isListRequest = urlPath === '/api/support' || urlPath === '/api/admin/support';
 
-const singleHandler = (req, res) => {
-  const { id } = req.params;
-  const ticket = supportStore.find(t => t.id === id || t._id === id) || supportStore[0];
+  if (isListRequest) {
+    return res.json({
+      success: true,
+      data: supportStore,
+      conversations: supportStore,
+      messages: supportStore,
+      tickets: supportStore
+    });
+  }
+
+  // Find targeted item or fallback to latest
+  const parts = urlPath.split('/');
+  const targetId = parts[parts.length - 1];
+  const ticket = supportStore.find(t => t.id === targetId || t._id === targetId || t.conversation_id === targetId) || supportStore[0];
 
   if (ticket) {
-    res.json({
+    return res.json({
       success: true,
       data: ticket,
       conversation: ticket,
+      ticket: ticket,
       subject: ticket.subject,
-      messages: ticket.messages
-    });
-  } else {
-    const dummy = createTicket();
-    res.json({
-      success: true,
-      data: dummy,
-      conversation: dummy,
-      subject: dummy.subject,
-      messages: dummy.messages
+      messages: ticket.messages || []
     });
   }
+
+  const dummy = createTicket();
+  res.json({
+    success: true,
+    data: dummy,
+    conversation: dummy,
+    ticket: dummy,
+    subject: dummy.subject,
+    messages: dummy.messages
+  });
 };
 
-// Endpoints
-app.get('/api/support', listHandler);
-app.get('/api/support/:id', singleHandler);
+// Bind all GET support endpoints dynamically
+app.get(['/api/support', '/api/support/*', '/api/admin/support', '/api/admin/support/*'], handleSupportGet);
 
+// User Send Message
 app.post('/api/support', (req, res) => {
   const newTicket = createTicket(req.body || {});
   supportStore.unshift(newTicket);
@@ -158,14 +171,14 @@ app.post('/api/support', (req, res) => {
   res.json({
     success: true,
     message: 'Your message has been sent successfully.',
-    data: newTicket
+    data: newTicket,
+    conversation: newTicket,
+    ticket: newTicket
   });
 });
 
-app.get('/api/admin/support', listHandler);
-app.get('/api/admin/support/:id', singleHandler);
-
-app.post('/api/admin/support/*', (req, res) => {
+// Admin Reply Message
+app.post(['/api/admin/support', '/api/admin/support/*'], (req, res) => {
   const { message, text, reply } = req.body || {};
   const replyContent = message || text || reply || 'Admin response sent';
 
@@ -175,6 +188,7 @@ app.post('/api/admin/support/*', (req, res) => {
     ticket.messages.push({
       id: 'M-' + Date.now(),
       sender: 'admin',
+      sender_type: 'admin',
       text: replyContent,
       message: replyContent,
       timestamp: now
@@ -188,7 +202,7 @@ app.post('/api/admin/support/*', (req, res) => {
   });
 });
 
-// ── Standard API Routes ──────────────────────────────
+// ── Standard Routes ──────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -197,7 +211,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/settings', settingsRoutes);
 
-// ── Error Handling ───────────────────────────────────
+// Error Middleware
 app.use(notFound);
 app.use(errorHandler);
 
