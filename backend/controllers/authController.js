@@ -122,9 +122,7 @@ const getMe = asyncHandler(async (req, res) => {
   res.json({ success: true, user: rows[0] });
 });
 
-// PUT /api/auth/password  { current_password, new_password }
-// Real bcrypt-backed password change — verifies the current password
-// before hashing and persisting the new one.
+// PUT /api/auth/password
 const changePassword = asyncHandler(async (req, res) => {
   const { current_password, new_password } = req.body;
 
@@ -151,10 +149,7 @@ const changePassword = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Password updated successfully.' });
 });
 
-// GET /api/auth/google-config — tells the login/register pages whether
-// "Continue with Google" is set up, and which client id to use. The client id
-// is public by design (it is visible in every Google sign-in page); the
-// secret never leaves the server (and this flow doesn't even need one).
+// GET /api/auth/google-config
 const getGoogleConfig = asyncHandler(async (req, res) => {
   res.json({
     success: true,
@@ -163,12 +158,7 @@ const getGoogleConfig = asyncHandler(async (req, res) => {
   });
 });
 
-// POST /api/auth/google  { credential }
-// Used by BOTH "Continue with Google" buttons (login + create account):
-//   • known Google account  -> log in
-//   • email already a customer account -> link Google to it, log in
-//   • brand-new email       -> create a customer account, log in
-// Existing email/password sign-up and login are untouched.
+// POST /api/auth/google
 const googleLogin = asyncHandler(async (req, res) => {
   const payload = await verifyGoogleIdToken(req.body && req.body.credential);
   const googleId = String(payload.sub);
@@ -188,7 +178,6 @@ const googleLogin = asyncHandler(async (req, res) => {
     if (user.status === 'disabled') {
       return res.status(403).json({ success: false, message: 'This account has been disabled. Contact support.' });
     }
-    // Admin accounts keep their own login; Google sign-in is for customers only.
     if (user.role !== 'customer') {
       return res.status(403).json({ success: false, message: 'Admin accounts must sign in from the admin login page.' });
     }
@@ -204,8 +193,6 @@ const googleLogin = asyncHandler(async (req, res) => {
     const firstName = (payload.given_name || nameParts[0] || email.split('@')[0]).slice(0, 80);
     const lastName = (payload.family_name || nameParts.slice(1).join(' ') || '').slice(0, 80);
 
-    // users.password_hash is NOT NULL, so store a hash of a random secret
-    // nobody knows — password login stays impossible until a password is set.
     const unusable = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), SALT_ROUNDS);
 
     const [result] = await pool.query(
