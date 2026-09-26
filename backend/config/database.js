@@ -1,38 +1,45 @@
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'fpv-mysql-mirzaahmad123pro-se4b.i.aivencloud.com',
-  port: process.env.DB_PORT || 15165,
-  user: process.env.DB_USER || 'avnadmin',
-  password: process.env.DB_PASSWORD || 'AVNS_GYUHL63Q1GjZU6EUrYX',
-  database: process.env.DB_NAME || 'defaultdb',
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
   },
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  dateStrings: true
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
 });
+
+// Helper function to map MySQL-style ? placeholders to Postgres $1, $2, etc.
+function formatQuery(text) {
+  let paramIndex = 1;
+  return text.replace(/\?/g, () => `$${paramIndex++}`);
+}
+
+// Wrapper for query to keep compatibility with existing controller syntax ([rows])
+async function queryWrapper(text, params = []) {
+  const formattedSql = formatQuery(text);
+  const res = await pool.query(formattedSql, params);
+  return [res.rows, res.fields];
+}
 
 async function testConnection() {
   try {
-    const conn = await pool.getConnection();
-    console.log('✅ Connected to MySQL database:', process.env.DB_NAME || 'defaultdb');
-    conn.release();
+    const client = await pool.connect();
+    console.log('✅ Connected to Supabase PostgreSQL database');
+    client.release();
   } catch (err) {
-    console.error('❌ Could not connect to MySQL database:', err.message);
+    console.error('❌ Could not connect to Supabase PostgreSQL database:', err.message);
   }
 }
 
-// Universal export object to safely support all controller import styles
 const dbExport = {
   pool,
   db: pool,
-  query: (...args) => pool.query(...args),
-  execute: (...args) => pool.execute(...args),
-  getConnection: (...args) => pool.getConnection(...args),
+  query: queryWrapper,
+  execute: queryWrapper,
+  getConnection: () => pool.connect(),
   testConnection
 };
 
