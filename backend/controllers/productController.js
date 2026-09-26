@@ -2,7 +2,14 @@ const { pool } = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const { slugify } = require('../utils/helpers');
 const { uploadToImgBB } = require('../utils/imgbbHelper');
-const { flags } = require('../config/schema');
+
+// Safe import if config/schema.js does not exist
+let flags = { reviews: false };
+try {
+  flags = require('../config/schema').flags || flags;
+} catch (e) {
+  // schema file missing fallback
+}
 
 // Average rating + review count, only selected once the reviews table exists
 // so a failed schema upgrade can never break the product listing.
