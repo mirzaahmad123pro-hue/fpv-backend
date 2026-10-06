@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { pool } = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
-const { verifyGoogleIdToken, isConfigured: googleConfigured } = require('../utils/googleAuth');
+const { verifyGoogleIdToken, isConfigured: googleConfigured } = require('../../utils/googleAuth');
 
 const SALT_ROUNDS = 12;
 
