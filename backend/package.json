@@ -1,7 +1,7 @@
 {
-  "name": "falcon-peak-venture-backend",
+  "name": "fast-global-eagle-backend",
   "version": "1.0.0",
-  "description": "Backend API for Falcon Peak Venture e-commerce platform",
+  "description": "Backend API for Fast Global Eagle e-commerce platform",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,21 +9,20 @@
     "create-admin": "node utils/createAdmin.js"
   },
   "dependencies": {
+    "axios": "^1.20.0",
     "bcrypt": "^5.1.1",
+    "cloudinary": "^1.41.3",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^7.1.0",
-    "google-auth-library": "^9.0.0",
+    "express-rate-limit": "^7.4.0",
+    "form-data": "^4.0.6",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.11.0",
-    "axios": "^1.6.0",
-    "form-data": "^4.0.0",
-    "cloudinary": "^1.41.0",
-    "multer-storage-cloudinary": "^4.0.0"
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
