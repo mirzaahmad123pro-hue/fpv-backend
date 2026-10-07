@@ -17,12 +17,25 @@ function formatQuery(text) {
   return text.replace(/\?/g, () => `$${paramIndex++}`);
 }
 
+// Keep raw pg query reference
+const rawQuery = pool.query.bind(pool);
+
 // Wrapper for query to keep compatibility with existing controller syntax ([rows])
 async function queryWrapper(text, params = []) {
+  const safeParams = Array.isArray(params) ? params : (params !== undefined ? [params] : []);
   const formattedSql = formatQuery(text);
-  const res = await pool.query(formattedSql, params);
-  return [res.rows, res.fields];
+  const res = await rawQuery(formattedSql, safeParams);
+  
+  const rows = res.rows || [];
+  rows.insertId = rows[0]?.id;
+  rows.affectedRows = res.rowCount;
+  
+  return [rows, res.fields];
 }
+
+// Override pool.query and pool.execute so all controllers automatically get [rows]
+pool.query = queryWrapper;
+pool.execute = queryWrapper;
 
 async function testConnection() {
   try {
