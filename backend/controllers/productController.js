@@ -106,6 +106,7 @@ const getProducts = asyncHandler(async (req, res) => {
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+ // ✅ YEH SAHI CODE HAI:
   const [rows] = await pool.query(
     `SELECT p.*, c.name AS category_name, c.slug AS category_slug,
             thumb.image_path AS thumbnail${ratingJoinColumns()}
@@ -115,8 +116,8 @@ const getProducts = asyncHandler(async (req, res) => {
      ${ratingJoinClause()}
      ${whereSql}
      ORDER BY ${orderBy}
-     LIMIT ? OFFSET ?`,
-    [...params, limitNum, offset]
+     LIMIT ${limitNum} OFFSET ${offset}`,
+    params
   );
 
   const [countRows] = await pool.query(
