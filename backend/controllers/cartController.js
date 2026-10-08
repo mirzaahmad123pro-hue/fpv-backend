@@ -5,8 +5,8 @@ const { asyncHandler } = require('../middleware/errorMiddleware');
 async function getOrCreateCartId(userId) {
   const [rows] = await pool.query('SELECT id FROM carts WHERE user_id = ?', [userId]);
   if (rows.length > 0) return rows[0].id;
-  const [result] = await pool.query('INSERT INTO carts (user_id) VALUES (?)', [userId]);
-  return result.insertId;
+  const [result] = await pool.query('INSERT INTO carts (user_id) VALUES (?) RETURNING id', [userId]);
+  return result[0]?.id || result.insertId;
 }
 
 // GET /api/cart
@@ -15,11 +15,8 @@ const getCart = asyncHandler(async (req, res) => {
 
   const [items] = await pool.query(
     `SELECT ci.id, ci.quantity, ci.variant_id,
-            p.id AS product_id, p.name, p.slug, p.regular_price, p.sale_price, p.stock_quantity, p.images,
-            COALESCE(
-              (SELECT image_path FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC LIMIT 1),
-              JSON_UNQUOTE(JSON_EXTRACT(p.images, '$[0]'))
-            ) AS thumbnail,
+            p.id AS product_id, p.name, p.slug, p.regular_price, p.sale_price, p.stock_quantity,
+            (SELECT image_path FROM product_images pi WHERE pi.product_id = p.id ORDER BY sort_order ASC, pi.id ASC LIMIT 1) AS thumbnail,
             v.size, v.color, v.price_adjustment, v.stock_quantity AS variant_stock
      FROM cart_items ci
      JOIN products p ON p.id = ci.product_id
@@ -30,18 +27,6 @@ const getCart = asyncHandler(async (req, res) => {
 
   let subtotal = 0;
   const formatted = items.map(item => {
-    let img = item.thumbnail;
-
-    // Fallback if images column contains JSON string or array
-    if ((!img || img === 'null') && item.images) {
-      try {
-        const parsed = typeof item.images === 'string' ? JSON.parse(item.images) : item.images;
-        if (Array.isArray(parsed) && parsed.length > 0) img = parsed[0];
-      } catch (e) {
-        if (typeof item.images === 'string') img = item.images;
-      }
-    }
-
     const basePrice = item.sale_price ? Number(item.sale_price) : Number(item.regular_price);
     const unitPrice = basePrice + Number(item.price_adjustment || 0);
     const lineTotal = unitPrice * item.quantity;
@@ -49,7 +34,7 @@ const getCart = asyncHandler(async (req, res) => {
 
     return { 
       ...item, 
-      thumbnail: img || null,
+      thumbnail: item.thumbnail || null,
       unit_price: unitPrice, 
       line_total: lineTotal 
     };
@@ -79,22 +64,42 @@ const addToCart = asyncHandler(async (req, res) => {
 
   const cartId = await getOrCreateCartId(req.user.id);
 
-  const [existing] = await pool.query(
-    'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ? AND variant_id <=> ?',
-    [cartId, product_id, variant_id || null]
-  );
-
-  if (existing.length > 0) {
-    const newQty = Math.min(existing[0].quantity + qty, products[0].stock_quantity);
-    await pool.query('UPDATE cart_items SET quantity = ? WHERE id = ?', [newQty, existing[0].id]);
-  } else {
-    await pool.query(
-      'INSERT INTO cart_items (cart_id, product_id, variant_id, quantity) VALUES (?, ?, ?, ?)',
-      [cartId, product_id, variant_id || null, qty]
+  // PostgreSQL safe query: variant_id check
+  let existing = [];
+  if (variant_id) {
+    const [rows] = await pool.query(
+      'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ? AND variant_id = ?',
+      [cartId, product_id, variant_id]
     );
+    existing = rows;
+  } else {
+    const [rows] = await pool.query(
+      'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ? AND variant_id IS NULL',
+      [cartId, product_id]
+    );
+    existing = rows;
   }
 
-  res.status(201).json({ success: true, message: 'Added to cart.' });
+  let cartItemId = null;
+  if (existing.length > 0) {
+    cartItemId = existing[0].id;
+    const newQty = Math.min(existing[0].quantity + qty, products[0].stock_quantity);
+    await pool.query('UPDATE cart_items SET quantity = ? WHERE id = ?', [newQty, cartItemId]);
+  } else {
+    const [insertRes] = await pool.query(
+      'INSERT INTO cart_items (cart_id, product_id, variant_id, quantity) VALUES (?, ?, ?, ?) RETURNING id',
+      [cartId, product_id, variant_id || null, qty]
+    );
+    cartItemId = insertRes[0]?.id || insertRes.insertId;
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Added to cart.',
+    itemId: cartItemId,
+    id: cartItemId,
+    item: { id: cartItemId }
+  });
 });
 
 // PUT /api/cart/:itemId  { quantity }
