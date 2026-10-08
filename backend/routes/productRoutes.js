@@ -1,24 +1,23 @@
-const multer = require('multer');
+const express = require('express');
+const router = express.Router();
+const { uploadProductImages } = require('../middleware/uploadMiddleware');
+const {
+  getProducts,
+  getProductById,
+  getProductBySlug,
+  createProduct,
+  updateProduct,
+  deleteProduct
+} = require('../controllers/productController');
 
-// Memory storage use karna zaroori hai taake buffer Supabase ko mil sake
-const storage = multer.memoryStorage();
+// Public routes
+router.get('/', getProducts);
+router.get('/slug/:slug', getProductBySlug);
+router.get('/:id', getProductById);
 
-const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith('image/')) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only images are allowed!'), false);
-  }
-};
+// Admin routes (.any() use karne se field name mismatch ka masla khatam ho jata hai)
+router.post('/', uploadProductImages.any(), createProduct);
+router.put('/:id', uploadProductImages.any(), updateProduct);
+router.delete('/:id', deleteProduct);
 
-const uploadProductImages = multer({
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
-  }
-});
-
-module.exports = {
-  uploadProductImages
-};
+module.exports = router;
