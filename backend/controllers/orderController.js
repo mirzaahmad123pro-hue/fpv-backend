@@ -82,7 +82,7 @@ const createOrder = asyncHandler(async (req, res) => {
      FROM cart_items ci
      JOIN products p ON p.id = ci.product_id
      LEFT JOIN product_variants v ON v.id = ci.variant_id
-     WHERE ci.cart_id = ?`,
+     WHERE ci.cart_id = $1`,
     [cartId]
   );
 
@@ -133,39 +133,38 @@ const createOrder = asyncHandler(async (req, res) => {
     ? (req.file.path || req.file.secure_url || req.file.url || `/uploads/receipts/${req.file.filename}`) 
     : null;
 
-  // PostgreSQL client connection for transaction
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    const [orderResult] = await client.query(
+    const orderResult = await client.query(
       `INSERT INTO orders (user_id, order_number, subtotal, shipping_fee, discount, total_amount, status, payment_status, payment_method, shipping_address, notes)
-       VALUES (?, ?, ?, ?, 0, ?, 'pending', ?, ?, ?, ?) RETURNING id`,
+       VALUES ($1, $2, $3, $4, 0, $5, 'pending', $6, $7, $8, $9) RETURNING id`,
       [req.user.id, orderNumber, subtotal, shippingFee, totalAmount, paymentStatus, payment_method, addressText, notes || null]
     );
-    const orderId = orderResult[0]?.id || orderResult.insertId;
+    const orderId = orderResult.rows[0]?.id || orderResult[0]?.insertId;
 
     for (const item of orderItemsData) {
       await client.query(
         `INSERT INTO order_items (order_id, product_id, variant_id, product_name, sku, quantity, unit_price, subtotal)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [orderId, item.product_id, item.variant_id, item.product_name, item.sku, item.quantity, item.unit_price, item.subtotal]
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [orderId, item.product_id, item.variant_id || null, item.product_name, item.sku || null, item.quantity, item.unit_price, item.subtotal]
       );
 
       if (item.variant_id) {
-        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.variant_id]);
+        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity - $1 WHERE id = $2', [item.quantity, item.variant_id]);
       } else {
-        await client.query('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.product_id]);
+        await client.query('UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2', [item.quantity, item.product_id]);
       }
     }
 
     await client.query(
       `INSERT INTO payments (order_id, payment_method, transaction_id, receipt_path, amount, status)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [orderId, payment_method, transaction_id || null, receiptPath, totalAmount, paymentStatus]
     );
 
-    await client.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
+    await client.query('DELETE FROM cart_items WHERE cart_id = $1', [cartId]);
 
     await client.query('COMMIT');
 
@@ -184,8 +183,8 @@ const createOrder = asyncHandler(async (req, res) => {
 
 // GET /api/orders/my-orders
 const getMyOrders = asyncHandler(async (req, res) => {
-  const [orders] = await pool.query(
-    'SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC',
+  const { rows: orders } = await pool.query(
+    'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
     [req.user.id]
   );
   res.json({ success: true, orders });
@@ -193,7 +192,7 @@ const getMyOrders = asyncHandler(async (req, res) => {
 
 // GET /api/orders/:id
 const getOrderById = asyncHandler(async (req, res) => {
-  const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  const { rows: orders } = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
   if (orders.length === 0) {
     return res.status(404).json({ success: false, message: 'Order not found.' });
   }
@@ -205,8 +204,8 @@ const getOrderById = asyncHandler(async (req, res) => {
     return res.status(403).json({ success: false, message: 'You do not have access to this order.' });
   }
 
-  const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [order.id]);
-  const [payment] = await pool.query('SELECT * FROM payments WHERE order_id = ?', [order.id]);
+  const { rows: items } = await pool.query('SELECT * FROM order_items WHERE order_id = $1', [order.id]);
+  const { rows: payment } = await pool.query('SELECT * FROM payments WHERE order_id = $1', [order.id]);
 
   res.json({ success: true, order: { ...order, items, payment: payment[0] || null } });
 });
@@ -218,7 +217,7 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Please select a cancellation reason.' });
   }
 
-  const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+  const { rows: orders } = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
   if (orders.length === 0) {
     return res.status(404).json({ success: false, message: 'Order not found.' });
   }
@@ -235,17 +234,17 @@ const cancelOrder = asyncHandler(async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const [items] = await client.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?', [order.id]);
+    const { rows: items } = await client.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = $1', [order.id]);
     for (const item of items) {
       if (item.variant_id) {
-        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.variant_id]);
+        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity + $1 WHERE id = $2', [item.quantity, item.variant_id]);
       } else if (item.product_id) {
-        await client.query('UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.product_id]);
+        await client.query('UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2', [item.quantity, item.product_id]);
       }
     }
 
     await client.query(
-      `UPDATE orders SET status = 'cancelled', cancellation_reason = ?, cancelled_at = NOW() WHERE id = ?`,
+      `UPDATE orders SET status = 'cancelled', cancellation_reason = $1, cancelled_at = NOW() WHERE id = $2`,
       [reason.trim(), order.id]
     );
 
