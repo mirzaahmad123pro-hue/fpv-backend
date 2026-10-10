@@ -152,9 +152,9 @@ const createOrder = asyncHandler(async (req, res) => {
       );
 
       if (item.variant_id) {
-        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity - $1 WHERE id = $2', [item.quantity, item.variant_id]);
+        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity - \$1 WHERE id = \$2', [item.quantity, item.variant_id]);
       } else {
-        await client.query('UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2', [item.quantity, item.product_id]);
+        await client.query('UPDATE products SET stock_quantity = stock_quantity - \$1 WHERE id = \$2', [item.quantity, item.product_id]);
       }
     }
 
@@ -164,7 +164,7 @@ const createOrder = asyncHandler(async (req, res) => {
       [orderId, payment_method, transaction_id || null, receiptPath, totalAmount, paymentStatus]
     );
 
-    await client.query('DELETE FROM cart_items WHERE cart_id = $1', [cartId]);
+    await client.query('DELETE FROM cart_items WHERE cart_id = \$1', [cartId]);
 
     await client.query('COMMIT');
 
@@ -183,16 +183,17 @@ const createOrder = asyncHandler(async (req, res) => {
 
 // GET /api/orders/my-orders
 const getMyOrders = asyncHandler(async (req, res) => {
-  const { rows: orders } = await pool.query(
-    'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC',
+  const result = await pool.query(
+    'SELECT * FROM orders WHERE user_id = \$1 ORDER BY created_at DESC',
     [req.user.id]
   );
+  const orders = Array.isArray(result) ? result : (result.rows || []);
   res.json({ success: true, orders });
 });
 
 // GET /api/orders/:id
 const getOrderById = asyncHandler(async (req, res) => {
-  const { rows: orders } = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
+  const { rows: orders } = await pool.query('SELECT * FROM orders WHERE id = \$1', [req.params.id]);
   if (orders.length === 0) {
     return res.status(404).json({ success: false, message: 'Order not found.' });
   }
@@ -204,8 +205,8 @@ const getOrderById = asyncHandler(async (req, res) => {
     return res.status(403).json({ success: false, message: 'You do not have access to this order.' });
   }
 
-  const { rows: items } = await pool.query('SELECT * FROM order_items WHERE order_id = $1', [order.id]);
-  const { rows: payment } = await pool.query('SELECT * FROM payments WHERE order_id = $1', [order.id]);
+  const { rows: items } = await pool.query('SELECT * FROM order_items WHERE order_id = \$1', [order.id]);
+  const { rows: payment } = await pool.query('SELECT * FROM payments WHERE order_id = \$1', [order.id]);
 
   res.json({ success: true, order: { ...order, items, payment: payment[0] || null } });
 });
@@ -217,7 +218,7 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Please select a cancellation reason.' });
   }
 
-  const { rows: orders } = await pool.query('SELECT * FROM orders WHERE id = $1', [req.params.id]);
+  const { rows: orders } = await pool.query('SELECT * FROM orders WHERE id = \$1', [req.params.id]);
   if (orders.length === 0) {
     return res.status(404).json({ success: false, message: 'Order not found.' });
   }
@@ -234,12 +235,12 @@ const cancelOrder = asyncHandler(async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { rows: items } = await client.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = $1', [order.id]);
+    const { rows: items } = await client.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = \$1', [order.id]);
     for (const item of items) {
       if (item.variant_id) {
-        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity + $1 WHERE id = $2', [item.quantity, item.variant_id]);
+        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity + \$1 WHERE id = \$2', [item.quantity, item.variant_id]);
       } else if (item.product_id) {
-        await client.query('UPDATE products SET stock_quantity = stock_quantity + $1 WHERE id = $2', [item.quantity, item.product_id]);
+        await client.query('UPDATE products SET stock_quantity = stock_quantity + \$1 WHERE id = \$2', [item.quantity, item.product_id]);
       }
     }
 
