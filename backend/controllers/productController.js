@@ -137,7 +137,25 @@ const getProductBySlug = asyncHandler(async (req, res) => {
     pool.query('SELECT * FROM product_variants WHERE product_id = ?', [product.id])
   ]);
 
-  res.json({ success: true, product: { ...product, images, variants } });
+  const formattedImages = (images || []).map(img => ({
+    ...img,
+    url: img.image_path,
+    image_url: img.image_path
+  }));
+
+  const mainImageUrl = formattedImages[0]?.image_path || null;
+
+  res.json({
+    success: true,
+    product: {
+      ...product,
+      thumbnail: mainImageUrl,
+      image: mainImageUrl,
+      image_url: mainImageUrl,
+      images: formattedImages,
+      variants: variants || []
+    }
+  });
 });
 
 // GET /api/products/id/:id
@@ -153,7 +171,14 @@ const getProductById = asyncHandler(async (req, res) => {
     ),
     pool.query('SELECT * FROM product_variants WHERE product_id = ?', [req.params.id])
   ]);
-  res.json({ success: true, product: { ...rows[0], images, variants } });
+  
+  const formattedImages = (images || []).map(img => ({
+    ...img,
+    url: img.image_path,
+    image_url: img.image_path
+  }));
+
+  res.json({ success: true, product: { ...rows[0], images: formattedImages, variants: variants || [] } });
 });
 
 // POST /api/products (admin)
@@ -191,7 +216,7 @@ const createProduct = asyncHandler(async (req, res) => {
 
   const productId = result[0]?.id || result.insertId;
 
-  // Images upload to Supabase Storage
+  // Images upload
   if (req.files && req.files.length > 0) {
     try {
       const uploadedUrls = await Promise.all(
@@ -251,17 +276,17 @@ const updateProduct = asyncHandler(async (req, res) => {
   const {
     category_id, name, sku, brand, short_description, full_description,
     regular_price, sale_price, stock_quantity, status, featured, new_arrival,
-    gender_or_target
+    gender_or_target, variants
   } = req.body;
 
   const slug = name ? slugify(name) : existing.slug;
 
   await pool.query(
     `UPDATE products SET
-       category_id = ?, name = ?, slug = ?, sku = ?, brand = ?,
-       short_description = ?, full_description = ?, regular_price = ?,
-       sale_price = ?, stock_quantity = ?, status = ?, featured = ?,
-       new_arrival = ?, gender_or_target = ?
+        category_id = ?, name = ?, slug = ?, sku = ?, brand = ?,
+        short_description = ?, full_description = ?, regular_price = ?,
+        sale_price = ?, stock_quantity = ?, status = ?, featured = ?,
+        new_arrival = ?, gender_or_target = ?
      WHERE id = ?`,
     [
       category_id || existing.category_id,
@@ -282,7 +307,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     ]
   );
 
-  // Upload new images to Supabase Storage
+  // Upload new images
   if (req.files && req.files.length > 0) {
     try {
       const [countRows] = await pool.query('SELECT COUNT(*) AS c FROM product_images WHERE product_id = ?', [id]);
@@ -301,6 +326,31 @@ const updateProduct = asyncHandler(async (req, res) => {
         success: false,
         message: `Product updated, but uploading new images failed: ${uploadErr.message}`
       });
+    }
+  }
+
+  // Update Variants: Purane delete karke naye insert karein
+  if (variants !== undefined) {
+    try {
+      await pool.query('DELETE FROM product_variants WHERE product_id = ?', [id]);
+      const parsedVariants = typeof variants === 'string' ? JSON.parse(variants) : variants;
+      if (Array.isArray(parsedVariants) && parsedVariants.length > 0) {
+        for (const v of parsedVariants) {
+          await pool.query(
+            'INSERT INTO product_variants (product_id, size, color, sku, price_adjustment, stock_quantity) VALUES (?, ?, ?, ?, ?, ?)',
+            [
+              id,
+              v.size || null,
+              v.color || null,
+              v.sku || null,
+              v.price_adjustment || 0,
+              v.stock_quantity || 0
+            ]
+          );
+        }
+      }
+    } catch (e) {
+      console.warn('Could not parse/update variants JSON:', e.message);
     }
   }
 
