@@ -12,7 +12,6 @@ const createOrder = asyncHandler(async (req, res) => {
 
   let shipping_address = req.body.shipping_address;
 
-  // JSON string handle karein
   if (typeof shipping_address === 'string') {
     try {
       shipping_address = JSON.parse(shipping_address);
@@ -21,12 +20,10 @@ const createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  // Agar shipping_address missing ya undefined hai, toh empty object banayein
   if (!shipping_address || typeof shipping_address !== 'object') {
     shipping_address = {};
   }
 
-  // Frontend ke kisi bhi payload format se data extract karein
   const firstName = shipping_address.first_name || req.body.first_name || '';
   const lastName = shipping_address.last_name || req.body.last_name || '';
   const fullNameCombined = `${firstName} ${lastName}`.trim();
@@ -64,7 +61,6 @@ const createOrder = asyncHandler(async (req, res) => {
     req.body.postal_code || 
     '';
 
-  // Final Validation Check
   if (!shipping_address.full_name || !shipping_address.phone || !shipping_address.address_line || !shipping_address.city) {
     return res.status(400).json({ success: false, message: 'Complete shipping address is required.' });
   }
@@ -133,45 +129,45 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const paymentStatus = isManualVerificationMethod ? 'pending_verification' : 'pending';
 
-  // FIX: Cloudinary URL ko direct use kar rahe hain
   const receiptPath = req.file 
     ? (req.file.path || req.file.secure_url || req.file.url || `/uploads/receipts/${req.file.filename}`) 
     : null;
 
-  const connection = await pool.getConnection();
+  // PostgreSQL client connection for transaction
+  const client = await pool.connect();
   try {
-    await connection.beginTransaction();
+    await client.query('BEGIN');
 
-    const [orderResult] = await connection.query(
+    const [orderResult] = await client.query(
       `INSERT INTO orders (user_id, order_number, subtotal, shipping_fee, discount, total_amount, status, payment_status, payment_method, shipping_address, notes)
-       VALUES (?, ?, ?, ?, 0, ?, 'pending', ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, 0, ?, 'pending', ?, ?, ?, ?) RETURNING id`,
       [req.user.id, orderNumber, subtotal, shippingFee, totalAmount, paymentStatus, payment_method, addressText, notes || null]
     );
-    const orderId = orderResult.insertId;
+    const orderId = orderResult[0]?.id || orderResult.insertId;
 
     for (const item of orderItemsData) {
-      await connection.query(
+      await client.query(
         `INSERT INTO order_items (order_id, product_id, variant_id, product_name, sku, quantity, unit_price, subtotal)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [orderId, item.product_id, item.variant_id, item.product_name, item.sku, item.quantity, item.unit_price, item.subtotal]
       );
 
       if (item.variant_id) {
-        await connection.query('UPDATE product_variants SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.variant_id]);
+        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.variant_id]);
       } else {
-        await connection.query('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.product_id]);
+        await client.query('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?', [item.quantity, item.product_id]);
       }
     }
 
-    await connection.query(
+    await client.query(
       `INSERT INTO payments (order_id, payment_method, transaction_id, receipt_path, amount, status)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [orderId, payment_method, transaction_id || null, receiptPath, totalAmount, paymentStatus]
     );
 
-    await connection.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
+    await client.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
 
-    await connection.commit();
+    await client.query('COMMIT');
 
     res.status(201).json({
       success: true,
@@ -179,10 +175,10 @@ const createOrder = asyncHandler(async (req, res) => {
       order: { id: orderId, order_number: orderNumber, total_amount: totalAmount, payment_status: paymentStatus }
     });
   } catch (err) {
-    await connection.rollback();
+    await client.query('ROLLBACK');
     throw err;
   } finally {
-    connection.release();
+    client.release();
   }
 });
 
@@ -235,31 +231,31 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: `This order can no longer be cancelled (current status: ${order.status}).` });
   }
 
-  const connection = await pool.getConnection();
+  const client = await pool.connect();
   try {
-    await connection.beginTransaction();
+    await client.query('BEGIN');
 
-    const [items] = await connection.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?', [order.id]);
+    const [items] = await client.query('SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?', [order.id]);
     for (const item of items) {
       if (item.variant_id) {
-        await connection.query('UPDATE product_variants SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.variant_id]);
+        await client.query('UPDATE product_variants SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.variant_id]);
       } else if (item.product_id) {
-        await connection.query('UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.product_id]);
+        await client.query('UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?', [item.quantity, item.product_id]);
       }
     }
 
-    await connection.query(
+    await client.query(
       `UPDATE orders SET status = 'cancelled', cancellation_reason = ?, cancelled_at = NOW() WHERE id = ?`,
       [reason.trim(), order.id]
     );
 
-    await connection.commit();
+    await client.query('COMMIT');
     res.json({ success: true, message: 'Order cancelled.' });
   } catch (err) {
-    await connection.rollback();
+    await client.query('ROLLBACK');
     throw err;
   } finally {
-    connection.release();
+    client.release();
   }
 });
 
