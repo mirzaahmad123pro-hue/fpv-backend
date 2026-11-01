@@ -1,38 +1,48 @@
-const axios = require('axios');
-const FormData = require('form-data');
+const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 
-async function uploadToImgBB(file) {
+// Supabase credentials (.env se uthayega)
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Bucket ka naam jo tumne Supabase storage mein banaya hoga (jaise 'products', 'uploads', etc.)
+const BUCKET_NAME = process.env.SUPABASE_BUCKET || 'products';
+
+async function uploadToSupabase(file) {
   if (!file) return null;
 
-  // Agar IMGBB_API_KEY set nahi hai, toh local path return kar dein taake app crash na ho
-  if (!process.env.IMGBB_API_KEY) {
-    return file.path || file.secure_url || file.url || `/uploads/${file.filename || 'default.png'}`;
-  }
-
   try {
-    const form = new FormData();
-    if (file.buffer) {
-      form.append('image', file.buffer.toString('base64'));
-    } else if (file.path) {
-      form.append('image', fs.createReadStream(file.path));
-    } else {
-      return null;
+    const fileBuffer = file.buffer || fs.readFileSync(file.path);
+    const fileName = `${Date.now()}-${file.originalname || 'image.png'}`;
+    const filePath = `uploads/${fileName}`;
+
+    // Supabase Storage mein upload karein
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, fileBuffer, {
+        contentType: file.mimetype || 'image/png',
+        upsert: true
+      });
+
+    if (error) {
+      console.error('Supabase upload error details:', error);
+      throw error;
     }
 
-    const response = await axios.post(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, form, {
-      headers: { ...form.getHeaders() }
-    });
+    // Public URL hasil karein
+    const { data: publicUrlData } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
 
-    return response.data.data.url;
+    return publicUrlData.publicUrl;
   } catch (error) {
-    console.error('ImgBB upload error:', error.message);
-    // Fallback taake image upload fail hone par bhi process na rukay
-    return file.path || file.secure_url || file.url || null;
+    console.error('Supabase storage upload failed:', error.message);
+    return file.path || null;
   }
 }
 
-// Dono tareeqon se export kar rahe hain taake koi bhi function name miss na ho
-module.exports = uploadToImgBB;
-module.exports.uploadToImgBB = uploadToImgBB;
-module.exports.uploadImageToImgBB = uploadToImgBB;
+// Export taake har jagah kaam kare
+module.exports = uploadToSupabase;
+module.exports.uploadToImgBB = uploadToSupabase;
+module.exports.uploadImageToImgBB = uploadToSupabase;
