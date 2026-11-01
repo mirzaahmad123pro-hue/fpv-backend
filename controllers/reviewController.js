@@ -127,14 +127,16 @@ const saveReview = asyncHandler(async (req, res) => {
     await pool.query(
       `INSERT INTO product_reviews (product_id, user_id, rating, comment, photo_path)
        VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE rating = VALUES(rating), comment = VALUES(comment), photo_path = VALUES(photo_path)`,
+       ON CONFLICT (product_id, user_id) 
+       DO UPDATE SET rating = EXCLUDED.rating, comment = EXCLUDED.comment, photo_path = EXCLUDED.photo_path`,
       [productId, req.user.id, rating, comment || null, photoPath]
     );
   } else {
     await pool.query(
       `INSERT INTO product_reviews (product_id, user_id, rating, comment)
        VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE rating = VALUES(rating), comment = VALUES(comment)`,
+       ON CONFLICT (product_id, user_id) 
+       DO UPDATE SET rating = EXCLUDED.rating, comment = EXCLUDED.comment`,
       [productId, req.user.id, rating, comment || null]
     );
   }
