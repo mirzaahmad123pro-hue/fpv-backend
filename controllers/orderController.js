@@ -248,7 +248,9 @@ const getMyOrders = asyncHandler(async (req, res) => {
   // Attach the item lines (name, quantity, thumbnail, size/colour) so the
   // orders page can show what was bought without one request per order.
   if (orders.length > 0) {
-    const [items] = await pool.query(`${ITEM_SELECT} WHERE oi.order_id IN (?) ORDER BY oi.id ASC`, [orders.map(o => o.id)]);
+    const orderIds = orders.map(o => o.id);
+    const placeholders = orderIds.map(() => '?').join(',');
+    const [items] = await pool.query(`${ITEM_SELECT} WHERE oi.order_id IN (${placeholders}) ORDER BY oi.id ASC`, orderIds);
     const byOrder = new Map();
     items.forEach(it => {
       if (!byOrder.has(it.order_id)) byOrder.set(it.order_id, []);
