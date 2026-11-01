@@ -76,14 +76,6 @@ const getAllOrders = asyncHandler(async (req, res) => {
 });
 
 // PUT /api/admin/orders/:id/status  { status, notes? }
-//
-// Besides saving the new status this keeps stock honest and feeds the customer's
-// order-tracking timeline:
-//   - moving an order to "cancelled" returns its items to stock (the customer
-//     cancel button already did this; the admin path used to skip it);
-//   - re-opening a cancelled order takes the stock out again, and is refused
-//     if that stock has meanwhile been sold;
-//   - every real status change is written to order_status_history.
 const updateOrderStatus = asyncHandler(async (req, res) => {
   const { status, notes } = req.body;
   const validStatuses = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'];
@@ -108,7 +100,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
       for (const item of items) {
         const table = item.variant_id ? 'product_variants' : 'products';
         const id = item.variant_id || item.product_id;
-        if (!id) continue; // the product was deleted since — nothing to adjust
+        if (!id) continue;
         if (restoring) {
           await connection.query(`UPDATE ${table} SET stock_quantity = stock_quantity + ? WHERE id = ?`, [item.quantity, id]);
         } else {
@@ -213,7 +205,6 @@ const updatePayment = asyncHandler(async (req, res) => {
 
   await pool.query('UPDATE payments SET status = ?, admin_notes = ? WHERE id = ?', [status, admin_notes || null, req.params.id]);
 
-  // Keep order.payment_status in sync with the payment record
   await pool.query('UPDATE orders SET payment_status = ? WHERE id = ?', [status, payments[0].order_id]);
 
   res.json({ success: true, message: 'Payment updated.' });
@@ -235,7 +226,7 @@ const updateSettings = asyncHandler(async (req, res) => {
   for (const [key, value] of entries) {
     await pool.query(
       `INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
-       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+       ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`,
       [key, String(value)]
     );
   }
@@ -243,8 +234,6 @@ const updateSettings = asyncHandler(async (req, res) => {
 });
 
 // POST /api/admin/settings/hero-banner  (admin) — multipart/form-data, field "image"
-// Uploads a new hero banner image and stores its path in settings under
-// the "hero_banner_image" key.
 const uploadHeroBanner = asyncHandler(async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'Please choose an image to upload.' });
@@ -257,7 +246,7 @@ const uploadHeroBanner = asyncHandler(async (req, res) => {
 
   await pool.query(
     `INSERT INTO settings (setting_key, setting_value) VALUES ('hero_banner_image', ?)
-     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+     ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`,
     [imagePath]
   );
 
