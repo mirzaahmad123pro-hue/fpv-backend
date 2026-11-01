@@ -22,7 +22,7 @@ function ratingColumns() {
 // A product can have many styles (size / colour combinations) as ONE
 // product — admins never need a separate product per colour.
 function parseVariants(raw) {
-  if (raw === undefined) return null;               // field not sent → leave variants alone
+  if (raw === undefined) return null;                // field not sent → leave variants alone
   let list = raw;
   if (typeof raw === 'string') {
     try { list = JSON.parse(raw); } catch (e) { return null; }
@@ -446,16 +446,11 @@ const createProduct = asyncHandler(async (req, res) => {
 
   const productId = result.insertId;
 
-  // Belt-and-suspenders: multer's array('images', 10) already stops more
-  // than 10 files arriving on a single request, but a product cannot have
-  // more than MAX_PRODUCT_IMAGES total, checked here too.
   if (req.files && req.files.length > MAX_PRODUCT_IMAGES) {
     await pool.query('DELETE FROM products WHERE id = ?', [productId]);
     return res.status(400).json({ success: false, message: `Maximum ${MAX_PRODUCT_IMAGES} images are allowed per product.` });
   }
 
-  // multer's fileFilter only trusts the Content-Type the browser sent; this
-  // checks the bytes themselves so a renamed non-image file can't get through.
   if (req.files && req.files.length > 0) {
     const invalidMsg = firstInvalidImageMessage(req.files);
     if (invalidMsg) {
@@ -464,17 +459,11 @@ const createProduct = asyncHandler(async (req, res) => {
     }
   }
 
-  // Upload each image buffer to ImgBB and store the returned CDN URLs.
-  // The product row already exists at this point, so an upload failure
-  // here is reported as a 502 (upstream/dependency failure) rather than
-  // a generic 500 — the product itself was created successfully, it just
-  // has no images yet and can be edited to add them once ImgBB is
-  // reachable again.
   let newImageIds = [];
   if (req.files && req.files.length > 0) {
     try {
       const uploadedUrls = await Promise.all(
-        req.files.map(file => uploadToImgBB(file.buffer))
+        req.files.map(file => uploadToImgBB(file))
       );
       newImageIds = await insertNewImages(productId, uploadedUrls, 0);
     } catch (uploadErr) {
@@ -490,7 +479,6 @@ const createProduct = asyncHandler(async (req, res) => {
   try {
     variantNote = await syncVariants(productId, parseVariants(variants), newImageIds);
   } catch (e) {
-    // The product itself exists; report the variant problem instead of pretending all is well.
     console.error('Variant save failed:', e.message);
     return res.status(500).json({ success: false, message: 'Product created, but its variants could not be saved. Edit the product to add them again.', productId });
   }
@@ -507,8 +495,6 @@ const updateProduct = asyncHandler(async (req, res) => {
   }
   const existing = existingRows[0];
 
-  // Reject an over-limit upload BEFORE saving anything, so a refused request
-  // never leaves the product half-updated.
   if (req.files && req.files.length > 0) {
     const [[{ c: currentImages }]] = await pool.query('SELECT COUNT(*) AS c FROM product_images WHERE product_id = ?', [id]);
     if (currentImages + req.files.length > MAX_PRODUCT_IMAGES) {
@@ -566,10 +552,6 @@ const updateProduct = asyncHandler(async (req, res) => {
     const [countRows] = await pool.query('SELECT COUNT(*) AS c FROM product_images WHERE product_id = ?', [id]);
     const currentCount = countRows[0].c;
 
-    // The 10-image cap applies to the product's TOTAL image count, so an
-    // edit that already has e.g. 7 images can only add up to 3 more —
-    // checked before anything is uploaded, so a rejected request never
-    // burns an ImgBB upload for nothing.
     if (currentCount + req.files.length > MAX_PRODUCT_IMAGES) {
       return res.status(400).json({
         success: false,
@@ -584,10 +566,8 @@ const updateProduct = asyncHandler(async (req, res) => {
 
     try {
       const uploadedUrls = await Promise.all(
-        req.files.map(file => uploadToImgBB(file.buffer))
+        req.files.map(file => uploadToImgBB(file))
       );
-      // Continue after the highest existing sort_order (not just COUNT) so a
-      // gap left by a deleted image can never cause two images to share an order.
       const [[{ maxOrder }]] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM product_images WHERE product_id = ?', [id]);
       newImageIds = await insertNewImages(id, uploadedUrls, maxOrder + 1);
     } catch (uploadErr) {
@@ -615,7 +595,6 @@ const deleteProduct = asyncHandler(async (req, res) => {
 
   const [orderItems] = await pool.query('SELECT id FROM order_items WHERE product_id = ? LIMIT 1', [id]);
   if (orderItems.length > 0) {
-    // Soft delete: mark inactive instead of destroying order history integrity
     await pool.query("UPDATE products SET status = 'inactive' WHERE id = ?", [id]);
     return res.json({
       success: true,
@@ -632,18 +611,15 @@ const deleteProductImage = asyncHandler(async (req, res) => {
   const [rows] = await pool.query('SELECT id, product_id FROM product_images WHERE id = ?', [req.params.imageId]);
   if (rows.length === 0) return res.status(404).json({ success: false, message: 'Image not found.' });
 
-  // A product must keep at least one image.
   const [[{ c }]] = await pool.query('SELECT COUNT(*) AS c FROM product_images WHERE product_id = ?', [rows[0].product_id]);
   if (c <= 1) {
     return res.status(400).json({ success: false, message: 'A product needs at least 1 image. Upload another image before removing this one.' });
   }
 
   await pool.query('DELETE FROM product_images WHERE id = ?', [rows[0].id]);
-  // Any variant that pointed at this image falls back to the product's main image.
   if (flags.variantImages) {
     await pool.query('UPDATE product_variants SET image_id = NULL WHERE image_id = ?', [rows[0].id]);
   }
-  // Re-pack sort_order (0..n-1) so the first remaining image is always the primary.
   const [left] = await pool.query('SELECT id FROM product_images WHERE product_id = ? ORDER BY sort_order ASC, id ASC', [rows[0].product_id]);
   for (let i = 0; i < left.length; i++) {
     await pool.query('UPDATE product_images SET sort_order = ? WHERE id = ?', [i, left[i].id]);
@@ -652,11 +628,6 @@ const deleteProductImage = asyncHandler(async (req, res) => {
 });
 
 // PUT /api/products/:id/images/reorder  (admin)  body: { image_ids: [3, 7, 1, ...] }
-// Rewrites sort_order to match the given order, so image_ids[0] becomes the
-// primary/thumbnail image (sort_order 0). Every product_images row for this
-// product must be present in image_ids exactly once, or the request is
-// rejected — this avoids silently dropping an image an admin forgot to
-// include, or leaving stale gaps in sort_order.
 const reorderProductImages = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const imageIds = Array.isArray(req.body.image_ids) ? req.body.image_ids.map(Number) : [];
