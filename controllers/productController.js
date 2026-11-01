@@ -1,7 +1,7 @@
 const { pool } = require('../config/database');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const { slugify } = require('../utils/helpers');
-const { uploadToImgBB } = require('../utils/imgbbHelper');
+const uploadToImgBB = require('../utils/imgbbHelper');
 const { flags } = require('../config/schema');
 const { firstInvalidImageMessage } = require('../utils/imageValidation');
 const cache = require('../utils/cache');
