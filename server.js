@@ -27,13 +27,11 @@ const announcementRoutes = require('./routes/announcementRoutes');
 const homeRoutes = require('./routes/homeRoutes');
 const bannerRoutes = require('./routes/bannerRoutes');
 const wishlistRoutes = require('./routes/wishlistRoutes');
-
-const app = express();
-
-// ── Render Proxy Fix ────────────────────────────────
-app.set('trust proxy', 1);
-
-// ── Security middleware ─────────────────────────────
+// ── Cross-Domain CORS Fix (Allow Any Domain / Vercel / Netlify) ──
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
