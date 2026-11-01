@@ -465,7 +465,11 @@ const createProduct = asyncHandler(async (req, res) => {
       const uploadedUrls = await Promise.all(
         req.files.map(file => uploadToImgBB(file))
       );
-      newImageIds = await insertNewImages(productId, uploadedUrls, 0);
+      // Safe maxOrder lookup to prevent NaN
+      const [maxRows] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM product_images WHERE product_id = ?', [productId]);
+      const maxOrder = maxRows && maxRows[0] ? Number(maxRows[0].maxOrder) : -1;
+      const startOrder = Number.isFinite(maxOrder) ? maxOrder + 1 : 0;
+      newImageIds = await insertNewImages(productId, uploadedUrls, startOrder);
     } catch (uploadErr) {
       return res.status(502).json({
         success: false,
@@ -568,8 +572,11 @@ const updateProduct = asyncHandler(async (req, res) => {
       const uploadedUrls = await Promise.all(
         req.files.map(file => uploadToImgBB(file))
       );
-      const [[{ maxOrder }]] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM product_images WHERE product_id = ?', [id]);
-      newImageIds = await insertNewImages(id, uploadedUrls, maxOrder + 1);
+      // Safe maxOrder lookup to completely eliminate NaN
+      const [maxRows] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) AS maxOrder FROM product_images WHERE product_id = ?', [id]);
+      const maxOrder = maxRows && maxRows[0] ? Number(maxRows[0].maxOrder) : -1;
+      const startOrder = Number.isFinite(maxOrder) ? maxOrder + 1 : 0;
+      newImageIds = await insertNewImages(id, uploadedUrls, startOrder);
     } catch (uploadErr) {
       return res.status(502).json({
         success: false,
