@@ -6,13 +6,19 @@ const { recordStatus } = require('./orderController');
 
 // GET /api/admin/dashboard
 const getDashboard = asyncHandler(async (req, res) => {
-  const [[{ totalSales }]] = await pool.query(
-    "SELECT COALESCE(SUM(total_amount),0) AS totalSales FROM orders WHERE status != 'cancelled'"
+  const [[salesRow]] = await pool.query(
+    "SELECT COALESCE(SUM(total_amount), 0) AS totalsales FROM orders WHERE status != 'cancelled'"
   );
-  const [[{ totalOrders }]] = await pool.query('SELECT COUNT(*) AS totalOrders FROM orders');
-  const [[{ pendingOrders }]] = await pool.query("SELECT COUNT(*) AS pendingOrders FROM orders WHERE status = 'pending'");
-  const [[{ totalCustomers }]] = await pool.query("SELECT COUNT(*) AS totalCustomers FROM users WHERE role = 'customer'");
-  const [[{ lowStock }]] = await pool.query("SELECT COUNT(*) AS lowStock FROM products WHERE stock_quantity <= 5 AND status = 'active'");
+  const [[ordersRow]] = await pool.query('SELECT COUNT(*) AS totalorders FROM orders');
+  const [[pendingRow]] = await pool.query("SELECT COUNT(*) AS pendingorders FROM orders WHERE status = 'pending'");
+  const [[customersRow]] = await pool.query("SELECT COUNT(*) AS totalcustomers FROM users WHERE role = 'customer'");
+  const [[stockRow]] = await pool.query("SELECT COUNT(*) AS lowstock FROM products WHERE stock_quantity <= 5 AND status = 'active'");
+
+  const totalSales = Number(salesRow?.totalsales || 0);
+  const totalOrders = Number(ordersRow?.totalorders || 0);
+  const pendingOrders = Number(pendingRow?.pendingorders || 0);
+  const totalCustomers = Number(customersRow?.totalcustomers || 0);
+  const lowStock = Number(stockRow?.lowstock || 0);
 
   const [recentOrders] = await pool.query(
     `SELECT o.id, o.order_number, o.total_amount, o.status, o.payment_status, o.created_at,
@@ -67,10 +73,11 @@ const getAllOrders = asyncHandler(async (req, res) => {
     [...params, limitNum, offset]
   );
 
-  const [[{ total }]] = await pool.query(
+  const [[totalRow]] = await pool.query(
     `SELECT COUNT(*) AS total FROM orders o LEFT JOIN users u ON u.id = o.user_id ${whereSql}`,
     params
   );
+  const total = Number(totalRow?.total || 0);
 
   res.json({ success: true, orders, pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) } });
 });
