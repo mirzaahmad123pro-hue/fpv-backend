@@ -5,15 +5,23 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Supabase bucket ka naam (misal ke taur par 'products' ya 'uploads')
 const BUCKET_NAME = process.env.SUPABASE_BUCKET || 'products';
 
 async function uploadToSupabase(file) {
   if (!file) return null;
 
   try {
-    const fileBuffer = file.buffer || fs.readFileSync(file.path);
-    const fileName = `${Date.now()}-${file.originalname || 'image.png'}`;
+    let fileBuffer;
+    if (file.buffer) {
+      fileBuffer = file.buffer;
+    } else if (file.path) {
+      fileBuffer = fs.readFileSync(file.path);
+    } else {
+      return null;
+    }
+
+    const originalName = file.originalname || 'image.png';
+    const fileName = `${Date.now()}-${originalName.replace(/\s+/g, '_')}`;
     const filePath = `uploads/${fileName}`;
 
     const { data, error } = await supabase.storage
@@ -35,7 +43,7 @@ async function uploadToSupabase(file) {
     return publicUrlData.publicUrl;
   } catch (error) {
     console.error('Supabase storage upload failed:', error.message);
-    return file.path || null;
+    throw error;
   }
 }
 
