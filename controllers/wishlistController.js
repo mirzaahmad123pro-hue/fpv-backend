@@ -50,7 +50,7 @@ const addToWishlist = asyncHandler(async (req, res) => {
   if (products.length === 0) {
     return res.status(404).json({ success: false, message: 'Product not found.' });
   }
-  await pool.query('INSERT IGNORE INTO wishlist_items (user_id, product_id) VALUES (?, ?)', [req.user.id, productId]);
+  await pool.query('INSERT INTO wishlist_items (user_id, product_id) VALUES (?, ?) ON CONFLICT DO NOTHING', [req.user.id, productId]);
   res.status(201).json({ success: true, message: 'Added to your wishlist.' });
 });
 
