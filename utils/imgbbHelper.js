@@ -1,12 +1,11 @@
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 
-// Supabase credentials (.env se uthayega)
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Bucket ka naam jo tumne Supabase storage mein banaya hoga (jaise 'products', 'uploads', etc.)
+// Supabase bucket ka naam (misal ke taur par 'products' ya 'uploads')
 const BUCKET_NAME = process.env.SUPABASE_BUCKET || 'products';
 
 async function uploadToSupabase(file) {
@@ -17,7 +16,6 @@ async function uploadToSupabase(file) {
     const fileName = `${Date.now()}-${file.originalname || 'image.png'}`;
     const filePath = `uploads/${fileName}`;
 
-    // Supabase Storage mein upload karein
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(filePath, fileBuffer, {
@@ -30,7 +28,6 @@ async function uploadToSupabase(file) {
       throw error;
     }
 
-    // Public URL hasil karein
     const { data: publicUrlData } = supabase.storage
       .from(BUCKET_NAME)
       .getPublicUrl(filePath);
@@ -42,7 +39,6 @@ async function uploadToSupabase(file) {
   }
 }
 
-// Export taake har jagah kaam kare
 module.exports = uploadToSupabase;
 module.exports.uploadToImgBB = uploadToSupabase;
 module.exports.uploadImageToImgBB = uploadToSupabase;
