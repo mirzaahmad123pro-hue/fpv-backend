@@ -85,7 +85,7 @@ const addToCart = asyncHandler(async (req, res) => {
   const cartId = await getOrCreateCartId(req.user.id);
 
   const [existing] = await pool.query(
-    'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ? AND variant_id <=> ?',
+    'SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ? AND variant_id IS NOT DISTINCT FROM ?',
     [cartId, product_id, chosenVariantId]
   );
 
