@@ -1,4 +1,66 @@
-// POST /api/reviews  (multipart/form-data)
+const { pool } = require('../config/database');
+const { asyncHandler } = require('../middleware/errorMiddleware');
+const { flags } = require('../config/schema');
+const { uploadToImgBB } = require('../utils/imgbbHelper');
+const { detectImageType } = require('../utils/imageValidation');
+
+const MAX_COMMENT = 1000;
+
+function unavailable(res) {
+  return res.status(503).json({ success: false, message: 'Reviews are temporarily unavailable.' });
+}
+
+function publicName(first, last) {
+  const f = (first || 'Customer').trim();
+  const l = (last || '').trim();
+  return l ? `${f} ${l[0].toUpperCase()}.` : f;
+}
+
+// GET /api/reviews/product/:productId
+const getProductReviews = asyncHandler(async (req, res) => {
+  if (!flags.reviews) return unavailable(res);
+  const productId = parseInt(req.params.productId, 10);
+  if (!productId) return res.status(400).json({ success: false, message: 'Invalid product.' });
+
+  const [rows] = await pool.query(
+    `SELECT r.id, r.user_id, r.rating, r.comment, r.photo_path, r.created_at, r.updated_at,
+            u.first_name, u.last_name
+     FROM product_reviews r JOIN users u ON u.id = r.user_id
+     WHERE r.product_id = ?
+     ORDER BY r.created_at DESC
+     LIMIT 200`,
+    [productId]
+  );
+
+  const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  let sum = 0;
+  rows.forEach(r => { distribution[r.rating] += 1; sum += r.rating; });
+
+  const myId = req.user ? req.user.id : null;
+  const reviews = rows.map(r => ({
+    id: r.id,
+    rating: r.rating,
+    comment: r.comment,
+    photo_url: r.photo_path || null,
+    author: publicName(r.first_name, r.last_name),
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    is_mine: myId !== null && r.user_id === myId
+  }));
+
+  res.json({
+    success: true,
+    summary: {
+      count: rows.length,
+      average: rows.length ? Math.round((sum / rows.length) * 10) / 10 : 0,
+      distribution
+    },
+    reviews,
+    my_review: reviews.find(r => r.is_mine) || null
+  });
+});
+
+// POST /api/reviews
 const saveReview = asyncHandler(async (req, res) => {
   if (!flags.reviews) return unavailable(res);
   if (req.user.role !== 'customer') {
@@ -18,7 +80,7 @@ const saveReview = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: `Review must be ${MAX_COMMENT} characters or fewer.` });
   }
 
-  // ── Verify that the customer has a DELIVERED order containing this product ──
+  // Verify that the customer has a DELIVERED order containing this product
   const [deliveredCheck] = await pool.query(
     `SELECT o.id FROM orders o
      JOIN order_items oi ON oi.order_id = o.id
@@ -82,3 +144,18 @@ const saveReview = asyncHandler(async (req, res) => {
     message: existing.length ? 'Your review was updated.' : 'Thanks! Your review was posted.'
   });
 });
+
+// DELETE /api/reviews/:id
+const deleteMyReview = asyncHandler(async (req, res) => {
+  if (!flags.reviews) return unavailable(res);
+  const [result] = await pool.query(
+    'DELETE FROM product_reviews WHERE id = ? AND user_id = ?',
+    [req.params.id, req.user.id]
+  );
+  if (result.affectedRows === 0) {
+    return res.status(404).json({ success: false, message: 'Review not found.' });
+  }
+  res.json({ success: true, message: 'Your review was removed.' });
+});
+
+module.exports = { getProductReviews, saveReview, deleteMyReview };
