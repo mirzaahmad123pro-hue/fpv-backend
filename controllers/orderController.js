@@ -34,20 +34,9 @@ const VALID_PAYMENT_METHODS = ['cod', 'jazzcash', 'easypaisa', 'bank_transfer'];
 const CANCELLABLE_ORDER_STATUSES = ['pending'];
 
 // POST /api/orders
-// Sent as multipart/form-data so a payment receipt screenshot can be
-// attached for non-COD methods (field name: "receipt").
-// Fields: shipping_address (JSON string: {full_name, phone, address_line,
-//         city, province, postal_code}), payment_method: 'cod'|'jazzcash'|
-//         'easypaisa'|'bank_transfer', notes, transaction_id?, receipt? (file)
 const createOrder = asyncHandler(async (req, res) => {
   const { payment_method, notes, transaction_id } = req.body;
 
-  // Optional — set by the "Buy Now" flow (product.html) so only that one
-  // cart line is ordered, leaving the rest of the customer's cart intact.
-  // Sent as a JSON string because this endpoint is multipart/form-data
-  // (for the receipt upload). When absent, every item in the cart is
-  // ordered — the original, unchanged behavior for the normal Cart →
-  // Checkout flow.
   let itemIds = null;
   if (req.body.item_ids !== undefined) {
     try {
@@ -56,15 +45,10 @@ const createOrder = asyncHandler(async (req, res) => {
         itemIds = parsed.map(Number).filter(Number.isInteger);
       }
     } catch (e) {
-      // Malformed item_ids falls back to "checkout the whole cart" rather
-      // than failing the order outright.
+      // Malformed item_ids falls back to whole cart
     }
   }
 
-  // shipping_address arrives as a JSON string in multipart form-data
-  // (form-data can't carry nested objects), but we also accept it as an
-  // already-parsed object in case a JSON request body is used instead —
-  // this keeps the endpoint backward compatible either way.
   let shipping_address = req.body.shipping_address;
   if (typeof shipping_address === 'string') {
     try {
@@ -81,15 +65,21 @@ const createOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid payment method.' });
   }
 
-  // Non-COD methods require proof of payment.
   const isManualVerificationMethod = payment_method !== 'cod';
   if (isManualVerificationMethod && !req.file) {
     return res.status(400).json({ success: false, message: 'Please upload a screenshot/receipt of your payment.' });
   }
 
   const cartId = await getOrCreateCartId(req.user.id);
-  const itemFilterSql = itemIds ? ' AND ci.id IN (?)' : '';
-  const itemFilterParams = itemIds ? [itemIds] : [];
+  
+  let itemFilterSql = '';
+  let itemFilterParams = [cartId];
+  if (itemIds && itemIds.length > 0) {
+    const placeholders = itemIds.map(() => '?').join(',');
+    itemFilterSql = ` AND ci.id IN (${placeholders})`;
+    itemFilterParams.push(...itemIds);
+  }
+
   const [items] = await pool.query(
     `SELECT ci.id, ci.quantity, ci.variant_id, p.id AS product_id, p.name, p.sku,
             p.regular_price, p.sale_price, p.stock_quantity,
@@ -98,7 +88,7 @@ const createOrder = asyncHandler(async (req, res) => {
      JOIN products p ON p.id = ci.product_id
      LEFT JOIN product_variants v ON v.id = ci.variant_id
      WHERE ci.cart_id = ?${itemFilterSql}`,
-    [cartId, ...itemFilterParams]
+    itemFilterParams
   );
 
   if (items.length === 0) {
@@ -146,10 +136,6 @@ const createOrder = asyncHandler(async (req, res) => {
 
   const addressText = `${shipping_address.full_name}, ${shipping_address.phone}\n${shipping_address.address_line}, ${shipping_address.city}${shipping_address.province ? ', ' + shipping_address.province : ''}${shipping_address.postal_code ? ' ' + shipping_address.postal_code : ''}`;
 
-  // COD stays 'pending' (fulfillment-based — nothing to verify up front).
-  // JazzCash/Easypaisa/Bank Transfer go to 'pending_verification' instead
-  // of ever silently auto-completing — an admin must check the uploaded
-  // receipt and mark it Paid/Rejected before the order is treated as paid.
   const paymentStatus = isManualVerificationMethod ? 'pending_verification' : 'pending';
 
   let receiptPath = null;
@@ -184,9 +170,6 @@ const createOrder = asyncHandler(async (req, res) => {
           [orderId, item.product_id, item.variant_id, item.product_name, item.sku, item.quantity, item.unit_price, item.subtotal]
         );
 
-        // Decrease stock. The "AND stock_quantity >= ?" guard makes this safe when
-        // two customers buy the last unit at the same moment: only one update can
-        // succeed, the other is refused instead of driving stock below zero.
         const [stockResult] = item.variant_id
           ? await connection.query('UPDATE product_variants SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?', [item.quantity, item.variant_id, item.quantity])
           : await connection.query('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND stock_quantity >= ?', [item.quantity, item.product_id, item.quantity]);
@@ -205,11 +188,9 @@ const createOrder = asyncHandler(async (req, res) => {
         [orderId, payment_method, transaction_id || null, receiptPath, totalAmount, paymentStatus]
       );
 
-      // Buy Now (itemIds set) only clears the specific line(s) just ordered,
-      // so the rest of the customer's cart is left exactly as it was. The
-      // normal Cart → Checkout flow (itemIds null) still clears everything.
-      if (itemIds) {
-        await connection.query('DELETE FROM cart_items WHERE cart_id = ? AND id IN (?)', [cartId, itemIds]);
+      if (itemIds && itemIds.length > 0) {
+        const placeholders = itemIds.map(() => '?').join(',');
+        await connection.query(`DELETE FROM cart_items WHERE cart_id = ? AND id IN (${placeholders})`, [cartId, ...itemIds]);
       } else {
         await connection.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
       }
@@ -224,9 +205,6 @@ const createOrder = asyncHandler(async (req, res) => {
       return;
     } catch (err) {
       await connection.rollback();
-      // Two customers ordering the same last items at the same instant can make the database
-      // abort one transaction as a "deadlock". That is normal and safe to repeat: the repeat
-      // finds the stock gone and answers with the friendly "just sold out" message instead of an error.
       if (isDeadlock(err) && attempt < 4) {
         await new Promise(r => setTimeout(r, 30 + Math.random() * 120 * attempt));
         continue;
@@ -245,8 +223,6 @@ const getMyOrders = asyncHandler(async (req, res) => {
     [req.user.id]
   );
 
-  // Attach the item lines (name, quantity, thumbnail, size/colour) so the
-  // orders page can show what was bought without one request per order.
   if (orders.length > 0) {
     const orderIds = orders.map(o => o.id);
     const placeholders = orderIds.map(() => '?').join(',');
@@ -264,8 +240,6 @@ const getMyOrders = asyncHandler(async (req, res) => {
 
 // GET /api/orders/:id
 const getOrderById = asyncHandler(async (req, res) => {
-  // The :id may be the numeric id (admin/older links) or the order number shown to
-  // customers (e.g. the order-success page only knows the number).
   const key = String(req.params.id);
   const [orders] = /^\d+$/.test(key)
     ? await pool.query('SELECT * FROM orders WHERE id = ?', [key])
@@ -284,8 +258,6 @@ const getOrderById = asyncHandler(async (req, res) => {
   const [items] = await pool.query(`${ITEM_SELECT} WHERE oi.order_id = ? ORDER BY oi.id ASC`, [order.id]);
   const [payment] = await pool.query('SELECT * FROM payments WHERE order_id = ?', [order.id]);
 
-  // Real timestamps for the tracking timeline (empty for orders placed before
-  // the history table existed — the storefront falls back to created_at).
   let history = [];
   if (flags.statusHistory) {
     const [h] = await pool.query(
@@ -299,9 +271,7 @@ const getOrderById = asyncHandler(async (req, res) => {
   res.json({ success: true, order: { ...order, items, payment: payment[0] || null, history } });
 });
 
-// PUT /api/orders/:id/cancel  (customer) — body: { reason }
-// Only allowed while the order is still 'pending'. Restores stock for
-// every line item and records the reason the customer gave.
+// PUT /api/orders/:id/cancel
 const cancelOrder = asyncHandler(async (req, res) => {
   const { reason } = req.body;
   if (!reason || !reason.trim()) {
@@ -310,7 +280,7 @@ const cancelOrder = asyncHandler(async (req, res) => {
 
   const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
   if (orders.length === 0) {
-    return res.status(404).json({ success: false, message: 'Order not found.' });
+    return res.status(404).json({ success: 'Order not found.' });
   }
   const order = orders[0];
 
@@ -325,9 +295,6 @@ const cancelOrder = asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // Lock the order row and re-check its status inside the transaction, so two
-    // simultaneous cancel clicks can never both pass the check and restore the
-    // stock twice.
     const [[locked]] = await connection.query('SELECT status FROM orders WHERE id = ? FOR UPDATE', [order.id]);
     if (!locked || !CANCELLABLE_ORDER_STATUSES.includes(locked.status)) {
       await connection.rollback();
