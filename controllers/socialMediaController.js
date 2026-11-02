@@ -85,13 +85,24 @@ const createSocialAccount = asyncHandler(async (req, res) => {
   const status = cleanStatus(req.body.status, 'active');
   if (!status) return res.status(400).json({ success: false, message: 'Status must be active or inactive.' });
 
-  // New accounts go to the end of the list.
-  const [[{ nextOrder }]] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) + 1 AS nextOrder FROM social_media_accounts');
+  // Safe fallback for sort_order to prevent any NOT NULL constraint violation
+  let nextOrder = 0;
+  try {
+    const [rows] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) + 1 AS nextOrder FROM social_media_accounts');
+    // Handle both array-destructuring and standard row formats across MySQL/PostgreSQL drivers
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (row && (row.nextOrder !== undefined || row.nextorder !== undefined)) {
+      nextOrder = Number(row.nextOrder ?? row.nextorder) || 0;
+    }
+  } catch (err) {
+    nextOrder = 0;
+  }
+
   const [result] = await pool.query(
     'INSERT INTO social_media_accounts (platform, profile_url, status, sort_order) VALUES (?, ?, ?, ?)',
     [p.platform, u.url, status, nextOrder]
   );
-  res.status(201).json({ success: true, message: 'Social media account added.', id: result.insertId });
+  res.status(201).json({ success: true, message: 'Social media account added.', id: result.insertId || result.insert_id });
 });
 
 // PUT /api/admin/social-media/reorder  { ids: [3, 1, 2] }  — registered BEFORE /:id in the router
