@@ -84,7 +84,7 @@ const createOrder = asyncHandler(async (req, res) => {
     if (prodRows.length === 0) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
-    const p = prodRows.0 || prodRows[0];
+    const p = prodRows[0];
     
     let variantStock = null;
     let priceAdj = 0;
@@ -93,7 +93,7 @@ const createOrder = asyncHandler(async (req, res) => {
     if (vId) {
       const [varRows] = await pool.query('SELECT id, price_adjustment, stock_quantity FROM product_variants WHERE id = ? AND product_id = ?', [vId, product_id]);
       if (varRows.length > 0) {
-        const v = varRows.0 || varRows[0];
+        const v = varRows[0];
         variantStock = Number(v.stock_quantity);
         priceAdj = Number(v.price_adjustment || 0);
       } else {
