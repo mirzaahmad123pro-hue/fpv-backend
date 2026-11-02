@@ -211,7 +211,6 @@ const updatePayment = asyncHandler(async (req, res) => {
   if (payments.length === 0) return res.status(404).json({ success: false, message: 'Payment not found.' });
 
   await pool.query('UPDATE payments SET status = ?, admin_notes = ? WHERE id = ?', [status, admin_notes || null, req.params.id]);
-
   await pool.query('UPDATE orders SET payment_status = ? WHERE id = ?', [status, payments[0].order_id]);
 
   res.json({ success: true, message: 'Payment updated.' });
@@ -224,7 +223,7 @@ const getSettings = asyncHandler(async (req, res) => {
   res.json({ success: true, settings });
 });
 
-// PUT /api/admin/settings   body: { key: value, key2: value2, ... }
+// PUT /api/admin/settings    body: { key: value, key2: value2, ... }
 const updateSettings = asyncHandler(async (req, res) => {
   const entries = Object.entries(req.body || {});
   if (entries.length === 0) {
@@ -233,7 +232,7 @@ const updateSettings = asyncHandler(async (req, res) => {
   for (const [key, value] of entries) {
     await pool.query(
       `INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)
-       ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`,
+        ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value`,
       [key, String(value)]
     );
   }
@@ -260,9 +259,39 @@ const uploadHeroBanner = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Hero banner updated.', hero_banner_image: imagePath });
 });
 
+// --- SOCIAL MEDIA ACCOUNTS FUNCTIONS (Added to fix sort_order constraint) ---
+
+// GET /api/admin/social-media
+const getSocialMediaAccounts = asyncHandler(async (req, res) => {
+  const [accounts] = await pool.query('SELECT * FROM social_media_accounts ORDER BY sort_order ASC, id ASC');
+  res.json({ success: true, accounts });
+});
+
+// POST /api/admin/social-media
+const addSocialMediaAccount = asyncHandler(async (req, res) => {
+  const { platform, profile_url, sort_order } = req.body;
+  if (!platform || !profile_url) {
+    return res.status(400).json({ success: false, message: 'Platform and profile URL are required.' });
+  }
+  const orderVal = sort_order !== undefined && sort_order !== null ? Number(sort_order) : 0;
+
+  await pool.query(
+    'INSERT INTO social_media_accounts (platform, profile_url, sort_order) VALUES (?, ?, ?)',
+    [platform, profile_url.trim(), orderVal]
+  );
+  res.json({ success: true, message: 'Social media account added successfully.' });
+});
+
+// DELETE /api/admin/social-media/:id
+const deleteSocialMediaAccount = asyncHandler(async (req, res) => {
+  await pool.query('DELETE FROM social_media_accounts WHERE id = ?', [req.params.id]);
+  res.json({ success: true, message: 'Social media account deleted.' });
+});
+
 module.exports = {
   getDashboard, getAllOrders, updateOrderStatus,
   getCustomers, getCustomerDetail, updateCustomerStatus,
   getPayments, updatePayment,
-  getSettings, updateSettings, uploadHeroBanner
+  getSettings, updateSettings, uploadHeroBanner,
+  getSocialMediaAccounts, addSocialMediaAccount, deleteSocialMediaAccount
 };
