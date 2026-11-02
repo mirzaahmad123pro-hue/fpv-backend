@@ -35,7 +35,7 @@ const CANCELLABLE_ORDER_STATUSES = ['pending'];
 
 // POST /api/orders
 const createOrder = asyncHandler(async (req, res) => {
-  const { payment_method, notes, transaction_id } = req.body;
+  const { payment_method, notes, transaction_id, buy_now, product_id, variant_id, quantity } = req.body;
 
   let itemIds = null;
   if (req.body.item_ids !== undefined) {
@@ -70,26 +70,73 @@ const createOrder = asyncHandler(async (req, res) => {
     return res.status(400).json({ success: false, message: 'Please upload a screenshot/receipt of your payment.' });
   }
 
-  const cartId = await getOrCreateCartId(req.user.id);
-  
-  let itemFilterSql = '';
-  let itemFilterParams = [cartId];
-  if (itemIds && itemIds.length > 0) {
-    const placeholders = itemIds.map(() => '?').join(',');
-    itemFilterSql = ` AND ci.id IN (${placeholders})`;
-    itemFilterParams.push(...itemIds);
-  }
+  let items = [];
+  const isDirectBuyNow = buy_now === '1' || buy_now === 1;
 
-  const [items] = await pool.query(
-    `SELECT ci.id, ci.quantity, ci.variant_id, p.id AS product_id, p.name, p.sku,
-            p.regular_price, p.sale_price, p.stock_quantity,
-            v.price_adjustment, v.stock_quantity AS variant_stock
-     FROM cart_items ci
-     JOIN products p ON p.id = ci.product_id
-     LEFT JOIN product_variants v ON v.id = ci.variant_id
-     WHERE ci.cart_id = ?${itemFilterSql}`,
-    itemFilterParams
-  );
+  if (isDirectBuyNow) {
+    if (!product_id) {
+      return res.status(400).json({ success: false, message: 'Product is required for direct checkout.' });
+    }
+    const qty = Math.max(1, Number(quantity) || 1);
+    
+    // Fetch product details
+    const [prodRows] = await pool.query('SELECT id, name, sku, regular_price, sale_price, stock_quantity FROM products WHERE id = ?', [product_id]);
+    if (prodRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+    const p = prodRows.0 || prodRows[0];
+    
+    let variantStock = null;
+    let priceAdj = 0;
+    let vId = variant_id ? Number(variant_id) : null;
+
+    if (vId) {
+      const [varRows] = await pool.query('SELECT id, price_adjustment, stock_quantity FROM product_variants WHERE id = ? AND product_id = ?', [vId, product_id]);
+      if (varRows.length > 0) {
+        const v = varRows.0 || varRows[0];
+        variantStock = Number(v.stock_quantity);
+        priceAdj = Number(v.price_adjustment || 0);
+      } else {
+        vId = null;
+      }
+    }
+
+    items = [{
+      id: null,
+      quantity: qty,
+      variant_id: vId,
+      product_id: p.id,
+      name: p.name,
+      sku: p.sku,
+      regular_price: p.regular_price,
+      sale_price: p.sale_price,
+      stock_quantity: Number(p.stock_quantity),
+      price_adjustment: priceAdj,
+      variant_stock: variantStock
+    }];
+  } else {
+    const cartId = await getOrCreateCartId(req.user.id);
+    
+    let itemFilterSql = '';
+    let itemFilterParams = [cartId];
+    if (itemIds && itemIds.length > 0) {
+      const placeholders = itemIds.map(() => '?').join(',');
+      itemFilterSql = ` AND ci.id IN (${placeholders})`;
+      itemFilterParams.push(...itemIds);
+    }
+
+    const [cartItems] = await pool.query(
+      `SELECT ci.id, ci.quantity, ci.variant_id, p.id AS product_id, p.name, p.sku,
+              p.regular_price, p.sale_price, p.stock_quantity,
+              v.price_adjustment, v.stock_quantity AS variant_stock
+       FROM cart_items ci
+       JOIN products p ON p.id = ci.product_id
+       LEFT JOIN product_variants v ON v.id = ci.variant_id
+       WHERE ci.cart_id = ?${itemFilterSql}`,
+      itemFilterParams
+    );
+    items = cartItems;
+  }
 
   if (items.length === 0) {
     return res.status(400).json({
@@ -188,11 +235,15 @@ const createOrder = asyncHandler(async (req, res) => {
         [orderId, payment_method, transaction_id || null, receiptPath, totalAmount, paymentStatus]
       );
 
-      if (itemIds && itemIds.length > 0) {
-        const placeholders = itemIds.map(() => '?').join(',');
-        await connection.query(`DELETE FROM cart_items WHERE cart_id = ? AND id IN (${placeholders})`, [cartId, ...itemIds]);
-      } else {
-        await connection.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
+      // Only clear cart if it's NOT a direct buy now
+      if (!isDirectBuyNow) {
+        const cartId = await getOrCreateCartId(req.user.id);
+        if (itemIds && itemIds.length > 0) {
+          const placeholders = itemIds.map(() => '?').join(',');
+          await connection.query(`DELETE FROM cart_items WHERE cart_id = ? AND id IN (${placeholders})`, [cartId, ...itemIds]);
+        } else {
+          await connection.query('DELETE FROM cart_items WHERE cart_id = ?', [cartId]);
+        }
       }
 
       await connection.commit();
@@ -280,7 +331,7 @@ const cancelOrder = asyncHandler(async (req, res) => {
 
   const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
   if (orders.length === 0) {
-    return res.status(404).json({ success: 'Order not found.' });
+    return res.status(404).json({ success: false, message: 'Order not found.' });
   }
   const order = orders[0];
 
